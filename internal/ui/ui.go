@@ -26,6 +26,8 @@ var (
 	forcedColor *bool
 	quiet       bool
 	assumeYes   bool
+	stdinReader = bufio.NewReader(os.Stdin)
+	stdinMu     sync.Mutex
 )
 
 func SetColor(enabled *bool) {
@@ -45,6 +47,10 @@ func isTTY(w io.Writer) bool {
 		return term.IsTerminal(int(f.Fd()))
 	}
 	return false
+}
+
+func IsTTY(w io.Writer) bool {
+	return isTTY(w)
 }
 
 func ColorEnabled(w io.Writer) bool {
@@ -316,8 +322,9 @@ func Prompt(text, defaultVal string) (string, error) {
 	}
 	fmt.Fprintf(os.Stdout, "%s %s%s: ", getGlyph("step", os.Stdout), text, suffix)
 	
-	reader := bufio.NewReader(os.Stdin)
-	answer, err := reader.ReadString('\n')
+	stdinMu.Lock()
+	answer, err := stdinReader.ReadString('\n')
+	stdinMu.Unlock()
 	if err != nil {
 		fmt.Fprintln(os.Stderr)
 		if defaultVal != "" {
@@ -344,10 +351,11 @@ func Confirm(question string, defaultVal bool) (bool, error) {
 		marks = "[Y/n]"
 	}
 	
-	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Fprintf(os.Stdout, "%s %s %s ", getGlyph("step", os.Stdout), question, dim(marks, os.Stdout))
-		answer, err := reader.ReadString('\n')
+		stdinMu.Lock()
+		answer, err := stdinReader.ReadString('\n')
+		stdinMu.Unlock()
 		if err != nil {
 			fmt.Fprintln(os.Stderr)
 			return false, fmt.Errorf("EOF")

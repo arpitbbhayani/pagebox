@@ -1,0 +1,39 @@
+# Binaries & build artifacts
+pb
+pagebox
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test & profiling artifacts
+*.test
+*.out
+coverage.*
+profile.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Local environment & secret files
+.env
+.env.*
+!.env.example
+
+# Editor & IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db

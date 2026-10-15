@@ -25,7 +25,14 @@ type s3Backend struct {
 }
 
 func NewS3Backend(cfg pbconfig.Config) (Storage, error) {
-	awscfg, err := config.LoadDefaultConfig(context.Background())
+	var opts []func(*config.LoadOptions) error
+	if cfg.Region != "" {
+		opts = append(opts, config.WithRegion(cfg.Region))
+	}
+	if cfg.AWSProfile != "" {
+		opts = append(opts, config.WithSharedConfigProfile(cfg.AWSProfile))
+	}
+	awscfg, err := config.LoadDefaultConfig(context.Background(), opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -134,9 +141,14 @@ func (s *s3Backend) List(ctx context.Context) ([]Object, error) {
 		prefix += "/"
 	}
 
+	var prefixPtr *string
+	if prefix != "" {
+		prefixPtr = aws.String(prefix)
+	}
+
 	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
 		Bucket: &s.bucket,
-		Prefix: aws.String(prefix),
+		Prefix: prefixPtr,
 	})
 
 	for paginator.HasMorePages() {

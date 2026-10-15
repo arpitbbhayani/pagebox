@@ -15,8 +15,6 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "pagebox",
 		Short: "Pagebox serves a folder of HTML documents over HTTP and syncs them.",
-		// Support 'pb' alias
-		Aliases: []string{"pb"},
 	}
 
 	// Global flags

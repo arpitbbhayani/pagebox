@@ -26,7 +26,7 @@ func DefaultConfig() Config {
 	home, _ := os.UserHomeDir()
 	return Config{
 		Backend:      "s3",
-		DocsDir:      filepath.Join(home, "Pagebox"),
+		DocsDir:      filepath.Join(home, "pagebox"),
 		Host:         "pagebox.local",
 		Port:         80,
 		Bind:         "127.0.0.1",

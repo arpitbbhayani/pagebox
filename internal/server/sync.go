@@ -46,6 +46,10 @@ func NewSyncLoop(cfg pbconfig.Config, idx *index.Store, store storage.Storage) (
 func (s *SyncLoop) Start(ctx context.Context) error {
 	defer s.watcher.Close()
 
+	if err := os.MkdirAll(s.cfg.DocsDir, 0755); err != nil {
+		return err
+	}
+
 	if err := s.setupWatcher(s.cfg.DocsDir); err != nil {
 		return err
 	}

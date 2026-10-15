@@ -2,21 +2,35 @@
 
 A local daemon and CLI that serves a folder of HTML documents over HTTP and keeps them in sync with an S3 bucket.
 
+## installation
+
+### quick install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arpitbbhayani/pagebox/master/install.sh | sh
+```
+
+### from source
+
+```bash
+git clone https://github.com/arpitbbhayani/pagebox.git
+cd pagebox
+make
+```
+
 ## get started
 
 ```bash
-go build -o pb ./cmd/pagebox
-
-./pb init
-./pb daemon install
+pagebox init
+pagebox daemon install
 ```
 
 ## commands
 
-- `pb list` — view all documents
-- `pb pull` — fetch changes from S3
-- `pb push` — push local changes to S3
-- `pb status` — view unpushed or diverged changes
-- `pb doctor` — check system and AWS configuration
+- `pagebox list` — view all documents
+- `pagebox pull` — fetch changes from S3
+- `pagebox push` — push local changes to S3
+- `pagebox status` — view unpushed or diverged changes
+- `pagebox doctor` — check system and AWS configuration
 
-Use `pb help` to see all available commands.
+Use `pagebox help` to see all available commands.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -42,11 +43,10 @@ var initCmd = &cobra.Command{
 		if cfg.Backend == "s3" {
 			// Check AWS credentials
 			s := ui.NewSpinner("Checking AWS credentials")
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			
-			awscfg, err := config.LoadDefaultConfig(ctx)
+			authCtx, authCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			awscfg, err := config.LoadDefaultConfig(authCtx)
 			if err != nil {
+				authCancel()
 				s.Stop(false)
 				ui.PrintErr("could not load AWS config", err.Error(), nil)
 				ui.Hint("configure AWS credentials to proceed:", nil)
@@ -55,7 +55,8 @@ var initCmd = &cobra.Command{
 			}
 			
 			stsClient := sts.NewFromConfig(awscfg)
-			_, err = stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+			_, err = stsClient.GetCallerIdentity(authCtx, &sts.GetCallerIdentityInput{})
+			authCancel()
 			if err != nil {
 				s.Stop(false)
 				ui.PrintErr("invalid AWS credentials", err.Error(), nil)
@@ -65,6 +66,10 @@ var initCmd = &cobra.Command{
 			}
 			s.Stop(true)
 			ui.PrintOk("aws credentials active", "", nil)
+
+			if awscfg.Region != "" {
+				cfg.Region = awscfg.Region
+			}
 
 			bucket, err := ui.Prompt("S3 bucket name", "")
 			if err != nil || bucket == "" {
@@ -78,10 +83,17 @@ var initCmd = &cobra.Command{
 			// check if bucket exists
 			s2 := ui.NewSpinner(fmt.Sprintf("Checking bucket %s", bucket))
 			s3Client := s3.NewFromConfig(awscfg)
-			_, err = s3Client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &bucket})
-			s2.Stop(true)
+			headCtx, headCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			_, err = s3Client.HeadBucket(headCtx, &s3.HeadBucketInput{Bucket: &bucket})
+			headCancel()
+			s2.Stop(err == nil)
 
 			if err != nil {
+				if errors.Is(err, context.DeadlineExceeded) || (headCtx.Err() == context.DeadlineExceeded) {
+					ui.PrintErr("connection timed out checking bucket", err.Error(), nil)
+					os.Exit(1)
+				}
+
 				// We don't have access or it doesn't exist. Ask to create.
 				create, cerr := ui.Confirm(fmt.Sprintf("Bucket '%s' not found or not accessible. Create it now?", bucket), true)
 				if cerr != nil {
@@ -89,22 +101,32 @@ var initCmd = &cobra.Command{
 				}
 				if create {
 					sp3 := ui.NewSpinner(fmt.Sprintf("Creating bucket %s", bucket))
-					_, cerr := s3Client.CreateBucket(ctx, &s3.CreateBucketInput{
+					createCtx, createCancel := context.WithTimeout(context.Background(), 30*time.Second)
+
+					createInput := &s3.CreateBucketInput{
 						Bucket: &bucket,
-						CreateBucketConfiguration: &types.CreateBucketConfiguration{
+					}
+					if awscfg.Region != "" && awscfg.Region != "us-east-1" {
+						createInput.CreateBucketConfiguration = &types.CreateBucketConfiguration{
 							LocationConstraint: types.BucketLocationConstraint(awscfg.Region),
-						},
-					})
-					sp3.Stop(true)
+						}
+					}
+
+					_, cerr := s3Client.CreateBucket(createCtx, createInput)
+					createCancel()
+
 					if cerr != nil {
 						// Some regions (us-east-1) don't like LocationConstraint. Let's try without it if it fails.
 						if strings.Contains(cerr.Error(), "LocationConstraint") || strings.Contains(cerr.Error(), "IllegalLocationConstraintException") {
 							sp4 := ui.NewSpinner(fmt.Sprintf("Retrying bucket creation %s", bucket))
-							_, cerr = s3Client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &bucket})
-							sp4.Stop(true)
+							retryCtx, retryCancel := context.WithTimeout(context.Background(), 30*time.Second)
+							_, cerr = s3Client.CreateBucket(retryCtx, &s3.CreateBucketInput{Bucket: &bucket})
+							retryCancel()
+							sp4.Stop(cerr == nil)
 						}
 					}
 					
+					sp3.Stop(cerr == nil)
 					if cerr != nil {
 						ui.PrintErr("failed to create bucket", cerr.Error(), nil)
 						os.Exit(1)
@@ -117,8 +139,7 @@ var initCmd = &cobra.Command{
 				ui.PrintOk("bucket exists", bucket, nil)
 			}
 			
-			prefix, _ := ui.Prompt("S3 prefix (leave empty for root)", "")
-			cfg.Prefix = prefix
+			cfg.Prefix = ""
 		}
 
 		docsDir, _ := ui.Prompt("docs directory", cfg.DocsDir)
@@ -139,8 +160,10 @@ var initCmd = &cobra.Command{
 		}
 
 		ui.PrintOk("pagebox initialized", "", nil)
-		ui.Hint("try next:", nil)
+		ui.Hint("choose how to run pagebox:", nil)
+		ui.Bullet("run as a background service (recommended):", nil)
 		ui.Command("pagebox daemon install", nil)
+		ui.Bullet("or run in foreground (current terminal):", nil)
 		ui.Command("pagebox serve", nil)
 	},
 }
