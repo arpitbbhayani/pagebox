@@ -123,6 +123,21 @@ func (s *Store) save() error {
 	return os.Rename(tempPath, s.path)
 }
 
+// TrimDocExt removes known document extensions (.html, .md, .markdown) case-insensitively.
+func TrimDocExt(s string) string {
+	lower := strings.ToLower(s)
+	if strings.HasSuffix(lower, ".html") {
+		return s[:len(s)-5]
+	}
+	if strings.HasSuffix(lower, ".markdown") {
+		return s[:len(s)-9]
+	}
+	if strings.HasSuffix(lower, ".md") {
+		return s[:len(s)-3]
+	}
+	return s
+}
+
 // Get returns an entry by ID or Key.
 func (s *Store) Get(id string) (Entry, bool) {
 	s.mu.RLock()
@@ -130,16 +145,17 @@ func (s *Store) Get(id string) (Entry, bool) {
 	if e, ok := s.entries[id]; ok {
 		return e, true
 	}
-	trimmed := strings.TrimSuffix(id, ".html")
+	trimmed := TrimDocExt(id)
 	if e, ok := s.entries[trimmed]; ok {
 		return e, true
 	}
-	withHTML := id + ".html"
-	if e, ok := s.entries[withHTML]; ok {
-		return e, true
+	for _, ext := range []string{".html", ".md", ".markdown"} {
+		if e, ok := s.entries[trimmed+ext]; ok {
+			return e, true
+		}
 	}
 	for _, e := range s.entries {
-		if e.Key == id || e.Key == withHTML || e.ID == id || e.ID == trimmed {
+		if e.Key == id || e.ID == id || e.ID == trimmed || TrimDocExt(e.Key) == trimmed || TrimDocExt(e.ID) == trimmed {
 			return e, true
 		}
 	}
@@ -183,14 +199,14 @@ func (s *Store) Update(id string, mutate func(*Entry)) error {
 	actualID := id
 	e, ok := s.entries[actualID]
 	if !ok {
-		trimmed := strings.TrimSuffix(id, ".html")
+		trimmed := TrimDocExt(id)
 		if existing, found := s.entries[trimmed]; found {
 			e = existing
 			ok = true
 			actualID = trimmed
 		} else {
 			for k, existing := range s.entries {
-				if existing.Key == id || existing.ID == id || existing.ID == trimmed {
+				if existing.Key == id || existing.ID == id || existing.ID == trimmed || TrimDocExt(existing.Key) == trimmed || TrimDocExt(existing.ID) == trimmed {
 					e = existing
 					ok = true
 					actualID = k
@@ -231,12 +247,12 @@ func (s *Store) Delete(id string) error {
 	if _, ok := s.entries[id]; ok {
 		delete(s.entries, id)
 	} else {
-		trimmed := strings.TrimSuffix(id, ".html")
+		trimmed := TrimDocExt(id)
 		if _, ok := s.entries[trimmed]; ok {
 			delete(s.entries, trimmed)
 		} else {
 			for k, e := range s.entries {
-				if e.Key == id || e.ID == id || e.ID == trimmed {
+				if e.Key == id || e.ID == id || e.ID == trimmed || TrimDocExt(e.Key) == trimmed || TrimDocExt(e.ID) == trimmed {
 					delete(s.entries, k)
 					break
 				}

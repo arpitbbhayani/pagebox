@@ -70,10 +70,7 @@ var statusCmd = &cobra.Command{
 					return nil
 				}
 				slashRel := filepath.ToSlash(rel)
-				id := slashRel
-				if strings.HasSuffix(slashRel, ".html") {
-					id = strings.TrimSuffix(slashRel, ".html")
-				}
+				id := index.TrimDocExt(slashRel)
 
 				if _, ok := idx.Get(id); !ok {
 					untracked = append(untracked, slashRel)

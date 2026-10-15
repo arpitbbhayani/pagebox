@@ -122,10 +122,7 @@ func (s *SyncLoop) handleFSEvent(event fsnotify.Event) {
 		return
 	}
 	
-	id := slashRel
-	if strings.HasSuffix(slashRel, ".html") {
-		id = strings.TrimSuffix(slashRel, ".html")
-	}
+	id := index.TrimDocExt(slashRel)
 
 	if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
 		s.markDirtyAndSchedule(id, slashRel)
@@ -234,10 +231,7 @@ func (s *SyncLoop) pollRemote(ctx context.Context) {
 	remoteMap := make(map[string]storage.Object)
 	for _, obj := range objects {
 		key := strings.TrimPrefix(obj.Key, "/")
-		id := key
-		if strings.HasSuffix(key, ".html") {
-			id = strings.TrimSuffix(key, ".html")
-		}
+		id := index.TrimDocExt(key)
 		remoteMap[id] = obj
 	}
 

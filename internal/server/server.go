@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"fmt"
 	"html"
@@ -20,6 +21,9 @@ import (
 	"github.com/arpitbhayani/pagebox/internal/index"
 	"github.com/arpitbhayani/pagebox/internal/storage"
 )
+
+//go:embed assets/marked.min.js
+var markedJS []byte
 
 type Server struct {
 	cfg   pbconfig.Config
@@ -51,6 +55,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.URL.Path == "/_pagebox/assets/marked.min.js" {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Write(markedJS)
+		return
+	}
+
 	if r.URL.Path == "/" || r.URL.Path == "/pagebox" {
 		s.serveIndex(w, r)
 		return
@@ -63,7 +74,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/")
-	id = strings.TrimSuffix(id, ".html")
+	id = index.TrimDocExt(id)
 
 	if id == "" {
 		s.serveIndex(w, r)
@@ -464,22 +475,29 @@ func (s *Server) serveDocument(w http.ResponseWriter, r *http.Request, id string
 
 	if !ok {
 		// Could be a new file on disk not yet in the index
-		localPath = filepath.Join(s.cfg.DocsDir, filepath.FromSlash(id+".html"))
-		if _, err := os.Stat(localPath); err != nil {
-			localPath = filepath.Join(s.cfg.DocsDir, filepath.FromSlash(id))
-			if _, err2 := os.Stat(localPath); err2 != nil {
-				s.serveNotFound(w, r, id)
-				return
+		candidates := []string{
+			id + ".html",
+			id + ".md",
+			id + ".markdown",
+			id,
+		}
+		found := false
+		for _, cand := range candidates {
+			p := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(cand))
+			if _, err := os.Stat(p); err == nil {
+				localPath = p
+				entry = index.Entry{
+					ID:    id,
+					Key:   cand,
+					State: index.StateNew,
+				}
+				found = true
+				break
 			}
 		}
-		key := id
-		if strings.HasSuffix(localPath, ".html") && !strings.HasSuffix(key, ".html") {
-			key = id + ".html"
-		}
-		entry = index.Entry{
-			ID:    id,
-			Key:   key,
-			State: index.StateNew,
+		if !found {
+			s.serveNotFound(w, r, id)
+			return
 		}
 	} else {
 		localPath = filepath.Join(s.cfg.DocsDir, filepath.FromSlash(entry.Key))
@@ -496,22 +514,40 @@ func (s *Server) serveDocument(w http.ResponseWriter, r *http.Request, id string
 		}
 	}
 
-	isHTML := strings.HasSuffix(strings.ToLower(localPath), ".html") || strings.HasSuffix(strings.ToLower(localPath), ".htm") || strings.HasSuffix(strings.ToLower(entry.Key), ".html")
+	lowerPath := strings.ToLower(localPath)
+	lowerKey := strings.ToLower(entry.Key)
 
-	// If raw document or non-HTML file is requested (e.g. inside the iframe or direct download / asset)
-	if !isHTML || r.URL.Query().Get("raw") == "1" || r.URL.Query().Get("raw") == "true" {
+	isHTML := strings.HasSuffix(lowerPath, ".html") || strings.HasSuffix(lowerPath, ".htm") || strings.HasSuffix(lowerKey, ".html")
+	isMarkdown := strings.HasSuffix(lowerPath, ".md") || strings.HasSuffix(lowerPath, ".markdown") || strings.HasSuffix(lowerKey, ".md") || strings.HasSuffix(lowerKey, ".markdown")
+
+	// If raw document is requested
+	if r.URL.Query().Get("raw") == "1" || r.URL.Query().Get("raw") == "true" {
 		if isHTML {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		} else if isMarkdown {
+			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		}
 		http.ServeFile(w, r, localPath)
 		return
 	}
 
+	// If client-side rendered markdown is requested (e.g. inside the iframe or standalone)
+	if isMarkdown && (r.URL.Query().Get("render") == "1" || r.URL.Query().Get("render") == "true") {
+		s.serveMarkdownRenderer(w, r, id, entry, localPath)
+		return
+	}
+
+	// If non-HTML, non-Markdown file is requested directly (e.g. image or pdf)
+	if !isHTML && !isMarkdown {
+		http.ServeFile(w, r, localPath)
+		return
+	}
+
 	// Serve the editorial viewer with the required "/pagebox" header, back arrow, and iframe
-	s.serveDocumentViewer(w, r, id, entry)
+	s.serveDocumentViewer(w, r, id, entry, isMarkdown)
 }
 
-func (s *Server) serveDocumentViewer(w http.ResponseWriter, r *http.Request, id string, entry index.Entry) {
+func (s *Server) serveDocumentViewer(w http.ResponseWriter, r *http.Request, id string, entry index.Entry, isMarkdown bool) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	state := string(entry.State)
@@ -521,6 +557,10 @@ func (s *Server) serveDocumentViewer(w http.ResponseWriter, r *http.Request, id 
 
 	escapedID := html.EscapeString(id)
 	rawURL := "/" + escapeURLPath(id) + "?raw=1"
+	frameURL := rawURL
+	if isMarkdown {
+		frameURL = "/" + escapeURLPath(id) + "?render=1"
+	}
 	breadcrumbs := renderBreadcrumbs(id)
 
 	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
@@ -707,7 +747,7 @@ html, body {
 				<span class="aui-pill-dot"></span>
 				<span>%s</span>
 			</span>
-			<a href="%s" target="_blank" class="aui-raw-btn" title="Open raw HTML in new tab">raw ↗</a>
+			<a href="%s" target="_blank" class="aui-raw-btn" title="Open raw document in new tab">raw ↗</a>
 			<button id="theme-btn" class="aui-theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
 				<svg class="aui-icon-sun" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<circle cx="12" cy="12" r="4"/>
@@ -790,11 +830,419 @@ html, body {
 		html.EscapeString(state),
 		html.EscapeString(state),
 		rawURL,
-		rawURL,
+		frameURL,
 		escapedID,
 	)
 
 	w.Write([]byte(htmlContent))
+}
+
+func (s *Server) serveMarkdownRenderer(w http.ResponseWriter, r *http.Request, id string, entry index.Entry, localPath string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	content, err := os.ReadFile(localPath)
+	if err != nil {
+		http.Error(w, "Failed to read document", http.StatusInternalServerError)
+		return
+	}
+
+	escapedScript := escapeScriptContent(string(content))
+	escapedID := html.EscapeString(id)
+
+	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%s · /pagebox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Lora:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
+<script>
+(function() {
+	var saved = localStorage.getItem('aui-theme');
+	if (saved) {
+		document.documentElement.setAttribute('data-theme', saved);
+	} else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+		document.documentElement.setAttribute('data-theme', 'dark');
+	}
+})();
+</script>
+<style>
+%s
+
+/* Markdown Prose Styles */
+html, body {
+	margin: 0;
+	padding: 0;
+	background: var(--aui-bg);
+	color: var(--aui-text);
+	font-family: var(--aui-font-sans);
+	line-height: 1.65;
+	-webkit-font-smoothing: antialiased;
+}
+
+.aui-prose-container {
+	max-width: 820px;
+	margin: 0 auto;
+	padding: 40px 28px 80px;
+	box-sizing: border-box;
+}
+
+.aui-prose {
+	font-size: 15.5px;
+	line-height: 1.7;
+	letter-spacing: -0.012em;
+	color: var(--aui-text);
+	word-break: break-word;
+}
+
+.aui-prose > *:first-child {
+	margin-top: 0 !important;
+}
+
+/* Headings */
+.aui-prose h1, .aui-prose h2, .aui-prose h3, .aui-prose h4, .aui-prose h5, .aui-prose h6 {
+	font-family: var(--aui-font-sans);
+	color: var(--aui-text);
+	letter-spacing: -0.02em;
+	line-height: 1.25;
+	margin-top: 36px;
+	margin-bottom: 16px;
+}
+
+.aui-prose h1 {
+	font-size: 30px;
+	font-weight: 700;
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--aui-border);
+	margin-bottom: 24px;
+}
+
+.aui-prose h2 {
+	font-size: 22px;
+	font-weight: 600;
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--aui-border-subtle);
+	margin-top: 36px;
+}
+
+.aui-prose h3 {
+	font-size: 18px;
+	font-weight: 600;
+	margin-top: 28px;
+}
+
+.aui-prose h4, .aui-prose h5, .aui-prose h6 {
+	font-size: 14.5px;
+	font-weight: 600;
+	color: var(--aui-text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+/* Paragraphs & Text */
+.aui-prose p {
+	margin-top: 0;
+	margin-bottom: 18px;
+}
+
+.aui-prose a {
+	color: var(--aui-crimson);
+	text-decoration: none;
+	border-bottom: 1px solid transparent;
+	transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.aui-prose a:hover {
+	border-bottom-color: var(--aui-crimson);
+}
+
+.aui-prose strong {
+	font-weight: 600;
+	color: var(--aui-text);
+}
+
+.aui-prose em {
+	font-family: var(--aui-font-serif);
+	font-style: italic;
+}
+
+/* Blockquotes */
+.aui-prose blockquote {
+	margin: 24px 0;
+	padding: 12px 20px;
+	background: var(--aui-bg-subtle);
+	border-left: 3px solid var(--aui-crimson);
+	border-radius: 0 4px 4px 0;
+	font-family: var(--aui-font-serif);
+	font-style: italic;
+	font-size: 15.5px;
+	color: var(--aui-text-muted);
+}
+
+.aui-prose blockquote p:last-child {
+	margin-bottom: 0;
+}
+
+/* Inline Code & Blocks */
+.aui-prose code {
+	font-family: var(--aui-font-mono);
+	font-size: 13px;
+	background: var(--aui-bg-subtle);
+	border: 1px solid var(--aui-border);
+	border-radius: 4px;
+	padding: 2px 6px;
+	color: var(--aui-text);
+}
+
+.aui-prose pre {
+	position: relative;
+	background: var(--aui-bg-subtle);
+	border: 1px solid var(--aui-border);
+	border-radius: 6px;
+	padding: 18px 20px;
+	margin: 24px 0;
+	overflow-x: auto;
+	line-height: 1.55;
+}
+
+.aui-prose pre code {
+	background: none;
+	border: none;
+	padding: 0;
+	font-size: 13.5px;
+	color: var(--aui-text);
+	white-space: pre;
+}
+
+.aui-code-copy-btn {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-family: var(--aui-font-mono);
+	font-size: 11px;
+	padding: 3px 8px;
+	border-radius: 4px;
+	background: var(--aui-bg-card);
+	border: 1px solid var(--aui-border);
+	color: var(--aui-text-muted);
+	cursor: pointer;
+	opacity: 0.7;
+	transition: all 0.15s ease;
+	user-select: none;
+}
+
+.aui-prose pre:hover .aui-code-copy-btn {
+	opacity: 1;
+}
+
+.aui-code-copy-btn:hover {
+	color: var(--aui-text);
+	border-color: var(--aui-crimson);
+}
+
+.aui-code-copy-btn.copied {
+	color: var(--aui-emerald);
+	border-color: var(--aui-emerald);
+	opacity: 1;
+}
+
+/* Lists */
+.aui-prose ul, .aui-prose ol {
+	padding-left: 24px;
+	margin: 0 0 20px;
+}
+
+.aui-prose li {
+	margin: 6px 0;
+	line-height: 1.65;
+}
+
+.aui-prose li > ul, .aui-prose li > ol {
+	margin-top: 6px;
+	margin-bottom: 6px;
+}
+
+.aui-prose input[type="checkbox"] {
+	accent-color: var(--aui-crimson);
+	margin-right: 6px;
+}
+
+/* Tables */
+.aui-prose table {
+	width: 100%%;
+	border-collapse: collapse;
+	margin: 24px 0;
+	font-size: 13.5px;
+}
+
+.aui-prose th {
+	font-family: var(--aui-font-mono);
+	font-size: 12px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	text-align: left;
+	padding: 10px 14px;
+	background: var(--aui-bg-subtle);
+	border: 1px solid var(--aui-border);
+	color: var(--aui-text-muted);
+}
+
+.aui-prose td {
+	padding: 10px 14px;
+	border: 1px solid var(--aui-border);
+	color: var(--aui-text);
+}
+
+.aui-prose tr:nth-child(even) {
+	background: var(--aui-bg-subtle);
+}
+
+/* Horizontal Rule */
+.aui-prose hr {
+	border: none;
+	border-top: 1px solid var(--aui-border);
+	margin: 36px 0;
+}
+
+/* Images */
+.aui-prose img {
+	max-width: 100%%;
+	height: auto;
+	border-radius: 4px;
+	border: 1px solid var(--aui-border);
+	margin: 16px 0;
+}
+</style>
+<script src="/_pagebox/assets/marked.min.js"></script>
+</head>
+<body>
+<div class="aui-prose-container">
+	<article class="aui-prose" id="content">
+		<div style="font-family: var(--aui-font-mono); color: var(--aui-text-muted); font-size: 13px;">Rendering document...</div>
+	</article>
+</div>
+
+<script type="text/markdown" id="raw-markdown">%s</script>
+
+<script>
+(function() {
+	function renderMarkdown() {
+		var scriptEl = document.getElementById('raw-markdown');
+		var raw = scriptEl ? scriptEl.textContent : '';
+		raw = raw.replace(/<\\\/script/gi, '</script>');
+
+		var contentEl = document.getElementById('content');
+		if (typeof marked !== 'undefined') {
+			marked.setOptions({
+				gfm: true,
+				breaks: false
+			});
+			contentEl.innerHTML = marked.parse(raw);
+		} else {
+			// Fallback if marked is loading or unavailable
+			fetch(window.location.pathname + '?raw=1')
+				.then(function(r) { return r.text(); })
+				.then(function(txt) {
+					if (typeof marked !== 'undefined') {
+						contentEl.innerHTML = marked.parse(txt);
+					} else {
+						contentEl.innerHTML = '<pre><code>' + txt.replace(/[&<>'"]/g, function(c) {
+							return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c];
+						}) + '</code></pre>';
+					}
+					enhanceProse();
+				})
+				.catch(function(err) {
+					contentEl.innerHTML = '<p style="color:var(--aui-rose);">Failed to render markdown: ' + err + '</p>';
+				});
+			return;
+		}
+
+		enhanceProse();
+	}
+
+	function enhanceProse() {
+		var contentEl = document.getElementById('content');
+		if (!contentEl) return;
+
+		// Extract first h1 as document title
+		var h1 = contentEl.querySelector('h1');
+		if (h1 && h1.textContent) {
+			document.title = h1.textContent.trim() + ' · /pagebox';
+		}
+
+		// Add copy buttons to pre blocks
+		contentEl.querySelectorAll('pre').forEach(function(pre) {
+			if (pre.querySelector('.aui-code-copy-btn')) return;
+			var btn = document.createElement('button');
+			btn.className = 'aui-code-copy-btn';
+			btn.type = 'button';
+			btn.title = 'Copy code';
+			btn.innerHTML = '<span class="aui-copy-text">Copy</span>';
+			btn.addEventListener('click', function() {
+				var code = pre.querySelector('code');
+				var text = code ? code.innerText : pre.innerText;
+				navigator.clipboard.writeText(text).then(function() {
+					btn.classList.add('copied');
+					btn.querySelector('.aui-copy-text').textContent = 'Copied!';
+					setTimeout(function() {
+						btn.classList.remove('copied');
+						btn.querySelector('.aui-copy-text').textContent = 'Copy';
+					}, 2000);
+				});
+			});
+			pre.appendChild(btn);
+		});
+
+		// External links open in new tab
+		contentEl.querySelectorAll('a').forEach(function(a) {
+			var href = a.getAttribute('href');
+			if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+				a.setAttribute('target', '_blank');
+				a.setAttribute('rel', 'noopener noreferrer');
+			}
+		});
+	}
+
+	// Listen for theme mutations from parent viewer frame
+	var observer = new MutationObserver(function(mutations) {
+		mutations.forEach(function(mutation) {
+			if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+				var theme = document.documentElement.getAttribute('data-theme');
+				if (theme) {
+					localStorage.setItem('aui-theme', theme);
+				}
+			}
+		});
+	});
+	observer.observe(document.documentElement, { attributes: true });
+
+	// Initial render
+	renderMarkdown();
+})();
+</script>
+</body>
+</html>`,
+		escapedID,
+		sharedCSS(),
+		escapedScript,
+	)
+
+	w.Write([]byte(htmlContent))
+}
+
+func escapeScriptContent(s string) string {
+	s = strings.ReplaceAll(s, "</script", "<\\/script")
+	s = strings.ReplaceAll(s, "</Script", "<\\/Script")
+	s = strings.ReplaceAll(s, "</SCRIPT", "<\\/SCRIPT")
+	s = strings.ReplaceAll(s, "<!--", "<\\!--")
+	return s
 }
 
 func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request, id string) {

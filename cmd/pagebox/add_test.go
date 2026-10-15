@@ -183,3 +183,47 @@ func TestPageboxAddCommandConfiguredDir(t *testing.T) {
 		t.Errorf("third run should not re-add unchanged overview.html")
 	}
 }
+
+func TestPageboxAddMarkdownFiles(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	docsDir := filepath.Join(tmpHome, "markdown_docs_dir")
+	_ = os.MkdirAll(docsDir, 0755)
+
+	configContent := "docs_dir = \"" + docsDir + "\"\nport = 8730\npoll_interval = \"5m\"\n"
+	_ = os.MkdirAll(filepath.Join(tmpHome, ".pagebox"), 0700)
+	_ = os.WriteFile(filepath.Join(tmpHome, ".pagebox", "config.toml"), []byte(configContent), 0644)
+
+	// Create markdown files
+	_ = os.WriteFile(filepath.Join(docsDir, "spec.md"), []byte("# Spec\n\nContent here"), 0644)
+	_ = os.MkdirAll(filepath.Join(docsDir, "rfcs"), 0755)
+	_ = os.WriteFile(filepath.Join(docsDir, "rfcs", "rfc-001.markdown"), []byte("# RFC 1"), 0644)
+
+	out := captureStdout(func() {
+		addCmd.SetArgs([]string{})
+		_ = addCmd.Execute()
+	})
+
+	if !strings.Contains(out, "add 'rfcs/rfc-001.markdown'") {
+		t.Errorf("expected out to add 'rfcs/rfc-001.markdown', got:\n%s", out)
+	}
+	if !strings.Contains(out, "add 'spec.md'") {
+		t.Errorf("expected out to add 'spec.md', got:\n%s", out)
+	}
+
+	idx, err := index.NewStore()
+	if err != nil {
+		t.Fatalf("failed to open index: %v", err)
+	}
+
+	e1, ok1 := idx.Get("spec")
+	if !ok1 || e1.Key != "spec.md" {
+		t.Errorf("expected spec in index with key 'spec.md', got ok=%v, key=%s", ok1, e1.Key)
+	}
+
+	e2, ok2 := idx.Get("rfcs/rfc-001")
+	if !ok2 || e2.Key != "rfcs/rfc-001.markdown" {
+		t.Errorf("expected rfcs/rfc-001 in index with key 'rfcs/rfc-001.markdown', got ok=%v, key=%s", ok2, e2.Key)
+	}
+}

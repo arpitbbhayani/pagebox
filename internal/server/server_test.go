@@ -329,3 +329,113 @@ func TestNestedDocumentViewerAndLazyLoading(t *testing.T) {
 	}
 }
 
+func TestMarkdownDocumentServing(t *testing.T) {
+	srv, tmpDir, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// 1. Create a markdown document on disk
+	mdContent := "# Getting Started with Pagebox\n\nThis is a **client-side** rendered markdown document.\n\n```bash\npagebox serve\n```\n\n| Feature | Status |\n| --- | --- |\n| Client-side Markdown | Supported |\n"
+	mdPath := filepath.Join(tmpDir, "guides", "getting-started.md")
+	_ = os.MkdirAll(filepath.Dir(mdPath), 0755)
+	if err := os.WriteFile(mdPath, []byte(mdContent), 0644); err != nil {
+		t.Fatalf("failed to write test md file: %v", err)
+	}
+
+	// 2. Add to index
+	_ = srv.idx.Update("guides/getting-started", func(e *index.Entry) {
+		e.ID = "guides/getting-started"
+		e.Key = "guides/getting-started.md"
+		e.State = index.StateCached
+		e.Size = int64(len(mdContent))
+		e.LastSyncedAt = time.Now()
+	})
+	defer srv.idx.Delete("guides/getting-started")
+
+	// 3. Test marked.min.js asset route
+	assetReq := httptest.NewRequest(http.MethodGet, "/_pagebox/assets/marked.min.js", nil)
+	assetRec := httptest.NewRecorder()
+	srv.ServeHTTP(assetRec, assetReq)
+	if assetRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for marked.min.js, got %d", assetRec.Code)
+	}
+	if ct := assetRec.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+		t.Errorf("expected javascript content-type, got: %s", ct)
+	}
+	if !strings.Contains(assetRec.Body.String(), "marked") {
+		t.Errorf("expected marked.min.js content to contain 'marked'")
+	}
+
+	// 4. Test accessing viewer via /guides/getting-started
+	viewerReq := httptest.NewRequest(http.MethodGet, "/guides/getting-started", nil)
+	viewerRec := httptest.NewRecorder()
+	srv.ServeHTTP(viewerRec, viewerReq)
+	if viewerRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for viewer, got %d", viewerRec.Code)
+	}
+	viewerBody := viewerRec.Body.String()
+
+	// Verify viewer contains /pagebox header and back link
+	if !strings.Contains(viewerBody, "/pagebox") || !strings.Contains(viewerBody, "aui-back-link") {
+		t.Errorf("expected viewer to contain /pagebox header and back link")
+	}
+	// Verify iframe points to render=1
+	if !strings.Contains(viewerBody, `src="/guides/getting-started?render=1"`) {
+		t.Errorf("expected iframe src to point to ?render=1, got: %s", viewerBody)
+	}
+	// Verify raw link points to ?raw=1
+	if !strings.Contains(viewerBody, `href="/guides/getting-started?raw=1"`) {
+		t.Errorf("expected raw link to point to ?raw=1, got: %s", viewerBody)
+	}
+
+	// 5. Test accessing client-side renderer via /guides/getting-started?render=1
+	renderReq := httptest.NewRequest(http.MethodGet, "/guides/getting-started?render=1", nil)
+	renderRec := httptest.NewRecorder()
+	srv.ServeHTTP(renderRec, renderReq)
+	if renderRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for ?render=1, got %d", renderRec.Code)
+	}
+	renderBody := renderRec.Body.String()
+
+	// Verify pure client-side architecture: raw markdown is embedded, marked.min.js is included
+	if !strings.Contains(renderBody, `id="raw-markdown"`) {
+		t.Errorf("expected raw-markdown script element in rendered template")
+	}
+	if !strings.Contains(renderBody, "Getting Started with Pagebox") {
+		t.Errorf("expected raw markdown content to be present in script element")
+	}
+	if !strings.Contains(renderBody, "/_pagebox/assets/marked.min.js") {
+		t.Errorf("expected script tag referencing /_pagebox/assets/marked.min.js")
+	}
+	if !strings.Contains(renderBody, "aui-prose") {
+		t.Errorf("expected .aui-prose container in render template")
+	}
+	if !strings.Contains(renderBody, "aui-code-copy-btn") {
+		t.Errorf("expected code copy button script in render template")
+	}
+
+	// 6. Test accessing raw markdown via /guides/getting-started?raw=1
+	rawReq := httptest.NewRequest(http.MethodGet, "/guides/getting-started?raw=1", nil)
+	rawRec := httptest.NewRecorder()
+	srv.ServeHTTP(rawRec, rawReq)
+	if rawRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for ?raw=1, got %d", rawRec.Code)
+	}
+	if ct := rawRec.Header().Get("Content-Type"); !strings.Contains(ct, "text/markdown") {
+		t.Errorf("expected text/markdown content type, got: %s", ct)
+	}
+	if rawRec.Body.String() != mdContent {
+		t.Errorf("expected exact raw markdown content, got: %s", rawRec.Body.String())
+	}
+
+	// 7. Test index page lists the markdown document
+	indexReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	indexRec := httptest.NewRecorder()
+	srv.ServeHTTP(indexRec, indexReq)
+	if indexRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for index, got %d", indexRec.Code)
+	}
+	if !strings.Contains(indexRec.Body.String(), "getting-started") {
+		t.Errorf("expected index page to list getting-started document")
+	}
+}
+

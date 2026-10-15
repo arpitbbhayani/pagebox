@@ -74,10 +74,7 @@ var addCmd = &cobra.Command{
 				continue
 			}
 
-			id := rel
-			if strings.HasSuffix(rel, ".html") {
-				id = strings.TrimSuffix(rel, ".html")
-			}
+			id := index.TrimDocExt(rel)
 
 			entry, exists := idx.Get(id)
 			if !exists {
