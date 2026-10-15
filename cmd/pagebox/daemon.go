@@ -88,6 +88,14 @@ var daemonInstallCmd = &cobra.Command{
 		ui.Bullet("view service status:   pagebox daemon status", nil)
 		ui.Bullet("stream live logs:      pagebox daemon logs", nil)
 		ui.Bullet("stop & uninstall:      pagebox uninstall", nil)
+
+		if isWSL() {
+			ui.Rule(nil)
+			ui.PrintInfo("WSL environment detected", "for Windows host browser access:", nil)
+			ui.Bullet("Access directly via http://localhost or http://127.0.0.1", nil)
+			ui.Bullet("To use http://pagebox.local on Windows, add this line to C:\\Windows\\System32\\drivers\\etc\\hosts (run Notepad as Admin):", nil)
+			ui.Command("127.0.0.1 pagebox.local", nil)
+		}
 	},
 }
 
@@ -177,4 +185,18 @@ func execSudo(name string, arg ...string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Run()
+}
+
+func isWSL() bool {
+	if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "" {
+		return true
+	}
+	b, err := os.ReadFile("/proc/version")
+	if err == nil {
+		s := strings.ToLower(string(b))
+		if strings.Contains(s, "microsoft") || strings.Contains(s, "wsl") {
+			return true
+		}
+	}
+	return false
 }

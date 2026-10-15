@@ -96,6 +96,10 @@ func checkNetwork() {
 		ui.PrintOk("hostname resolution", "pagebox.local mapped", nil)
 	}
 
+	if isWSL() {
+		ui.PrintInfo("WSL detected", "to open http://pagebox.local on Windows, add '127.0.0.1 pagebox.local' to C:\\Windows\\System32\\drivers\\etc\\hosts", nil)
+	}
+
 	// Check if port 80 is available (or bound by us)
 	ln, err := net.Listen("tcp", ":80")
 	if err != nil {

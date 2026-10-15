@@ -163,3 +163,10 @@ log_info "Get started by running:"
 printf "  ${BOLD}pagebox init${RESET}\n"
 printf "  ${BOLD}pagebox daemon install${RESET}\n"
 echo
+
+if grep -qi "microsoft\|wsl" /proc/version 2>/dev/null || [ -n "$WSL_DISTRO_NAME" ]; then
+    log_info "WSL environment detected:"
+    printf "  · Windows browser can access Pagebox at: ${BOLD}http://localhost${RESET}\n"
+    printf "  · To use ${BOLD}http://pagebox.local${RESET} on Windows, add '127.0.0.1 pagebox.local' to C:\\Windows\\System32\\drivers\\etc\\hosts\n"
+    echo
+fi
