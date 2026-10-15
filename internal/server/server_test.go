@@ -95,8 +95,14 @@ func TestIndexPage(t *testing.T) {
 	if !strings.Contains(body, "/pagebox") {
 		t.Errorf("expected body to contain '/pagebox'")
 	}
-	if !strings.Contains(body, "Document Index") {
-		t.Errorf("expected body to contain 'Document Index'")
+	if strings.Contains(body, "mirror active") {
+		t.Errorf("expected body to NOT contain 'mirror active'")
+	}
+	if strings.Contains(body, "Local-first Static Mirror") {
+		t.Errorf("expected body to NOT contain 'Local-first Static Mirror'")
+	}
+	if strings.Contains(body, "Document Index") {
+		t.Errorf("expected body to NOT contain 'Document Index'")
 	}
 	if !strings.Contains(body, "sample-doc") {
 		t.Errorf("expected body to list 'sample-doc'")
@@ -106,6 +112,9 @@ func TestIndexPage(t *testing.T) {
 	}
 	if !strings.Contains(body, "aui-filter-btn") {
 		t.Errorf("expected filter tabs")
+	}
+	if !strings.Contains(body, "aui-icon-sun") || !strings.Contains(body, "aui-icon-moon") {
+		t.Errorf("expected theme toggle to contain SVG sun and moon icons")
 	}
 }
 
@@ -134,6 +143,9 @@ func TestDocumentViewer(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/"`) {
 		t.Errorf("expected back arrow link to point to index '/'")
+	}
+	if !strings.Contains(body, "aui-icon-sun") || !strings.Contains(body, "aui-icon-moon") {
+		t.Errorf("expected viewer header to contain theme toggle SVG icons")
 	}
 
 	// Verify iframe loading raw document

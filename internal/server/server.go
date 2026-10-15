@@ -148,7 +148,7 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>/pagebox · Document Index</title>
+<title>/pagebox</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Lora:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
@@ -175,26 +175,33 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 				<a href="/" class="aui-brand">
 					<span class="aui-brand-symbol">/</span>pagebox
 				</a>
-				<span class="aui-live-badge">
-					<span class="aui-pulse-dot"></span>
-					mirror active
-				</span>
 			</div>
 			<div class="aui-nav-tools">
 				<span class="aui-doc-counter">%d documents</span>
-				<button id="theme-btn" class="aui-theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">◐</button>
+				<button id="theme-btn" class="aui-theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
+					<svg class="aui-icon-sun" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="12" cy="12" r="4"/>
+						<path d="M12 2v2"/>
+						<path d="M12 20v2"/>
+						<path d="m4.93 4.93 1.41 1.41"/>
+						<path d="m17.66 17.66 1.41 1.41"/>
+						<path d="M2 12h2"/>
+						<path d="M20 12h2"/>
+						<path d="m6.34 17.66-1.41 1.41"/>
+						<path d="m19.07 4.93-1.41 1.41"/>
+					</svg>
+					<svg class="aui-icon-moon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+					</svg>
+				</button>
 			</div>
 		</div>
 	</header>
 
 	<!-- Main Content -->
 	<main class="aui-main">
-		<!-- Hero Section -->
+		<!-- Stats / Telemetry -->
 		<section class="aui-hero">
-			<span class="aui-eyebrow">Local-first Static Mirror</span>
-			<h1 class="aui-title">Document Index</h1>
-			<p class="aui-subtitle">Live editorial documents synchronized from cloud storage to your local filesystem.</p>
-
 			<div class="aui-telemetry-row">
 				<span class="aui-pill aui-pill-cached"><span class="aui-pill-dot"></span>%d cached</span>
 				%s
@@ -606,7 +613,22 @@ html, body {
 				<span>%s</span>
 			</span>
 			<a href="%s" target="_blank" class="aui-raw-btn" title="Open raw HTML in new tab">raw ↗</a>
-			<button id="theme-btn" class="aui-theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">◐</button>
+			<button id="theme-btn" class="aui-theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
+				<svg class="aui-icon-sun" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="12" cy="12" r="4"/>
+					<path d="M12 2v2"/>
+					<path d="M12 20v2"/>
+					<path d="m4.93 4.93 1.41 1.41"/>
+					<path d="m17.66 17.66 1.41 1.41"/>
+					<path d="M2 12h2"/>
+					<path d="M20 12h2"/>
+					<path d="m6.34 17.66-1.41 1.41"/>
+					<path d="m19.07 4.93-1.41 1.41"/>
+				</svg>
+				<svg class="aui-icon-moon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+				</svg>
+			</button>
 		</div>
 	</header>
 
@@ -981,34 +1003,7 @@ body {
 	color: var(--aui-crimson);
 }
 
-.aui-live-badge {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	padding: 2px 8px;
-	border-radius: 9999px;
-	font-family: var(--aui-font-mono);
-	font-size: 11px;
-	font-weight: 500;
-	color: var(--aui-emerald);
-	background: var(--aui-emerald-bg);
-	border: 1px solid var(--aui-emerald-border);
-}
 
-.aui-pulse-dot {
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: var(--aui-emerald);
-	box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
-	animation: aui-pulse 2s infinite;
-}
-
-@keyframes aui-pulse {
-	0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-	70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-	100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-}
 
 .aui-nav-tools {
 	display: flex;
@@ -1026,14 +1021,14 @@ body {
 	background: transparent;
 	border: 1px solid var(--aui-border);
 	color: var(--aui-text-muted);
-	width: 30px;
-	height: 30px;
+	width: 28px;
+	height: 28px;
 	border-radius: 4px;
-	display: flex;
+	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	cursor: pointer;
-	font-size: 13px;
+	padding: 0;
 	transition: all 0.15s ease;
 }
 
@@ -1041,6 +1036,37 @@ body {
 	background: var(--aui-bg-subtle);
 	color: var(--aui-text);
 	border-color: var(--aui-border-subtle);
+}
+
+.aui-theme-toggle svg {
+	width: 14px;
+	height: 14px;
+	stroke-width: 2;
+}
+
+.aui-theme-toggle .aui-icon-sun {
+	display: block;
+}
+
+.aui-theme-toggle .aui-icon-moon {
+	display: none;
+}
+
+[data-theme="dark"] .aui-theme-toggle .aui-icon-sun {
+	display: none;
+}
+
+[data-theme="dark"] .aui-theme-toggle .aui-icon-moon {
+	display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) .aui-theme-toggle .aui-icon-sun {
+		display: none;
+	}
+	:root:not([data-theme="light"]) .aui-theme-toggle .aui-icon-moon {
+		display: block;
+	}
 }
 
 .aui-main {
@@ -1052,34 +1078,7 @@ body {
 }
 
 .aui-hero {
-	margin-bottom: 28px;
-}
-
-.aui-eyebrow {
-	display: inline-block;
-	font-family: var(--aui-font-mono);
-	font-size: 11px;
-	font-weight: 500;
-	text-transform: uppercase;
-	letter-spacing: 0.08em;
-	color: var(--aui-crimson);
-	margin-bottom: 6px;
-}
-
-.aui-title {
-	font-size: 28px;
-	font-weight: 700;
-	line-height: 1.15;
-	margin: 0 0 6px 0;
-	letter-spacing: -0.025em;
-	color: var(--aui-text);
-}
-
-.aui-subtitle {
-	font-size: 15px;
-	color: var(--aui-text-muted);
-	margin: 0 0 16px 0;
-	max-width: 640px;
+	margin-bottom: 20px;
 }
 
 .aui-telemetry-row {
