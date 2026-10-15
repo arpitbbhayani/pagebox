@@ -1,172 +1,352 @@
-#!/bin/sh
-set -e
-
-# Pagebox Installer
+#!/usr/bin/env sh
+# Universal installer script for pagebox (https://pagebox.arpitbhayani.me)
+#
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/arpitbbhayani/pagebox/master/install.sh | sh
+#   curl -fsSL https://pagebox.arpitbhayani.me/install.sh | sh
+#
+# Environment variables:
+#   VERSION       - target version to install (e.g. "0.1.0" or "latest", default: "latest")
+#   INSTALL_DIR   - target directory for binary (default: /usr/local/bin or ~/.local/bin)
+#   PAGEBOX_REPO  - GitHub repository (default: arpitbbhayani/pagebox)
 
-REPO_OWNER="arpitbbhayani"
-REPO_NAME="pagebox"
-REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}"
-BINARY_NAME="pagebox"
+set -eu
 
-# Text formatting
+REPO="${PAGEBOX_REPO:-arpitbbhayani/pagebox}"
+VERSION="${VERSION:-latest}"
+
+# Color codes
 BOLD="\033[1m"
-GREEN="\033[32m"
-YELLOW="\033[33m"
-RED="\033[31m"
-BLUE="\033[34m"
+GREEN="\033[38;5;71m"
+AMBER="\033[38;5;208m"
+RED="\033[38;5;167m"
 RESET="\033[0m"
 
 # Disable color if stdout is not a TTY
 if [ ! -t 1 ]; then
-    BOLD=""
-    GREEN=""
-    YELLOW=""
-    RED=""
-    BLUE=""
-    RESET=""
+  BOLD=""
+  GREEN=""
+  AMBER=""
+  RED=""
+  RESET=""
 fi
 
 log_info() {
-    printf "${BLUE}›${RESET} %s\n" "$1"
+  printf " ${GREEN}✓${RESET} %b\n" "$1"
 }
 
-log_ok() {
-    printf "${GREEN}✓${RESET} %s\n" "$1"
+log_step() {
+  printf " ${AMBER}›${RESET} %b\n" "$1"
 }
 
 log_warn() {
-    printf "${YELLOW}!${RESET} %s\n" "$1"
+  printf " ${AMBER}!${RESET} %b\n" "$1"
 }
 
-log_err() {
-    printf "${RED}✗${RESET} %s\n" "$1" >&2
+log_error() {
+  printf " ${RED}✗${RESET} %b\n" "$1" >&2
 }
 
-echo
-printf "${BOLD}Pagebox Installer${RESET}\n"
-echo
-
-# Detect OS and architecture
+# 1. Detect OS
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-ARCH="$(uname -m)"
-
-case "$ARCH" in
-    x86_64|amd64)
-        ARCH="amd64"
-        ;;
-    arm64|aarch64)
-        ARCH="arm64"
-        ;;
-    *)
-        log_err "Unsupported architecture: $ARCH"
-        exit 1
-        ;;
-esac
-
 case "$OS" in
-    linux|darwin)
-        ;;
-    *)
-        log_err "Unsupported operating system: $OS"
-        exit 1
-        ;;
+  linux*)   OS="linux" ;;
+  darwin*)  OS="darwin" ;;
+  freebsd*) OS="freebsd" ;;
+  openbsd*) OS="openbsd" ;;
+  netbsd*)  OS="netbsd" ;;
+  msys*|cygwin*|mingw*) OS="windows" ;;
+  *)
+    log_error "Unsupported operating system: $OS"
+    exit 1
+    ;;
 esac
+
+# 2. Detect Architecture
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64|amd64)      ARCH="amd64" ;;
+  aarch64|arm64)     ARCH="arm64" ;;
+  armv7*|armv6*|arm) ARCH="arm" ;;
+  i386|i686)         ARCH="386" ;;
+  riscv64)           ARCH="riscv64" ;;
+  *)
+    log_error "Unsupported machine architecture: $ARCH"
+    exit 1
+    ;;
+esac
+
+# 3. HTTP Client detection
+fetch() {
+  url="$1"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --connect-timeout 10 --max-time 30 --retry 2 "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- -T 15 -t 3 "$url"
+  else
+    log_error "Neither curl nor wget found in PATH. Please install one of them."
+    exit 1
+  fi
+}
+
+fetch_file() {
+  url="$1"
+  out="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --connect-timeout 10 --max-time 300 --retry 2 -o "$out" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -T 30 -t 3 -O "$out" "$url"
+  fi
+}
+
+log_step "Detecting latest release for ${BOLD}${REPO}${RESET} (${OS}/${ARCH})..."
+
+# 4. Resolve latest version if not explicitly provided
+if [ "$VERSION" = "latest" ]; then
+  RELEASE_JSON=$(fetch "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)
+  if [ -n "$RELEASE_JSON" ]; then
+    VERSION=$(printf '%s' "$RELEASE_JSON" | grep '"tag_name":' | head -n 1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' | sed 's/^v//')
+  fi
+  # Fallback to VERSION file in master if release API returned empty/rate-limited
+  if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
+    VERSION=$(fetch "https://raw.githubusercontent.com/${REPO}/master/VERSION" 2>/dev/null | tr -d ' \r\n' || true)
+  fi
+fi
+
+if [ -z "$VERSION" ]; then
+  VERSION="0.1.0"
+fi
+
+BINARY_EXT=""
+[ "$OS" = "windows" ] && BINARY_EXT=".exe"
+
+# 5. Determine installation target directory (cascading ladder; sudo is last resort)
+USE_SUDO=0
+TARGET_DIR=""
+
+is_writable() {
+  d="$1"
+  [ -z "$d" ] && return 1
+  mkdir -p "$d" 2>/dev/null || return 1
+  test_file="$d/.pagebox_test_$$"
+  if ( : > "$test_file" ) 2>/dev/null; then
+    rm -f "$test_file" 2>/dev/null
+    return 0
+  fi
+  return 1
+}
+
+# Priority 1: Explicit user overrides
+if [ -n "${PAGEBOX_INSTALL_DIR:-}" ] && is_writable "$PAGEBOX_INSTALL_DIR"; then
+  TARGET_DIR="$PAGEBOX_INSTALL_DIR"
+elif [ -n "${INSTALL_DIR:-}" ] && is_writable "$INSTALL_DIR"; then
+  TARGET_DIR="$INSTALL_DIR"
+fi
+
+# Priority 2: User-writable directories that are ALREADY in PATH
+if [ -z "$TARGET_DIR" ]; then
+  for d in "${HOME:-}/.local/bin" "${HOME:-}/bin" "/usr/local/bin"; do
+    if [ -n "$d" ]; then
+      case ":${PATH:-}:" in
+        *":$d:"*)
+          if is_writable "$d"; then
+            TARGET_DIR="$d"
+            break
+          fi
+          ;;
+      esac
+    fi
+  done
+fi
+
+# Priority 3: Standard user directory fallbacks
+if [ -z "$TARGET_DIR" ]; then
+  if [ -n "${HOME:-}" ] && is_writable "${HOME}/.local/bin"; then
+    TARGET_DIR="${HOME}/.local/bin"
+  elif [ -n "${HOME:-}" ] && is_writable "${HOME}/bin"; then
+    TARGET_DIR="${HOME}/bin"
+  elif is_writable "/usr/local/bin"; then
+    TARGET_DIR="/usr/local/bin"
+  fi
+fi
+
+# Priority 4: Last resort — requiring sudo
+if [ -z "$TARGET_DIR" ]; then
+  if command -v sudo >/dev/null 2>&1 && [ -d "/usr/local/bin" ]; then
+    USE_SUDO=1
+    TARGET_DIR="/usr/local/bin"
+  else
+    TARGET_DIR="${TMPDIR:-/tmp}/pagebox/bin"
+    mkdir -p "$TARGET_DIR" 2>/dev/null || true
+  fi
+fi
+
+TARGET_BIN="${TARGET_DIR}/pagebox${BINARY_EXT}"
+
+# 6. Check existing installation and version
+ACTION="Installed"
+CURRENT_VER=""
+if [ -f "$TARGET_BIN" ] || [ -L "$TARGET_BIN" ]; then
+  if [ -x "$TARGET_BIN" ]; then
+    CURRENT_VER=$("$TARGET_BIN" version 2>&1 | grep -oE "[0-9]+\.[0-9]+(\.[0-9]+)?" | head -n 1 || true)
+    if [ -z "$CURRENT_VER" ]; then
+      CURRENT_VER=$("$TARGET_BIN" --version 2>&1 | grep -oE "[0-9]+\.[0-9]+(\.[0-9]+)?" | head -n 1 || true)
+    fi
+  fi
+
+  if [ -n "$CURRENT_VER" ]; then
+    log_step "Found existing pagebox v${CURRENT_VER} at ${BOLD}${TARGET_BIN}${RESET}"
+    ACTION="Updated"
+  else
+    log_step "Replacing existing binary at ${BOLD}${TARGET_BIN}${RESET}..."
+    ACTION="Replaced"
+  fi
+fi
+
+BINARY_NAME="pagebox-${VERSION}-${OS}-${ARCH}${BINARY_EXT}"
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${BINARY_NAME}"
+FALLBACK_URL="https://github.com/${REPO}/releases/download/${VERSION}/${BINARY_NAME}"
 
 TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t 'pagebox-install')"
-cleanup() {
-    rm -rf "$TMP_DIR"
-}
-trap cleanup EXIT INT TERM
+trap 'rm -rf "$TMP_DIR"' EXIT
 
-# Determine installation directory
-if [ -n "$PAGEBOX_INSTALL_DIR" ]; then
-    INSTALL_DIR="$PAGEBOX_INSTALL_DIR"
-elif [ -w "/usr/local/bin" ]; then
-    INSTALL_DIR="/usr/local/bin"
-else
-    INSTALL_DIR="$HOME/.local/bin"
+TMP_FILE="${TMP_DIR}/pagebox"
+
+# 7. Download or build binary
+DOWNLOADED=0
+log_step "Downloading ${BINARY_NAME}..."
+
+if fetch_file "$DOWNLOAD_URL" "$TMP_FILE" 2>/dev/null && [ -s "$TMP_FILE" ]; then
+  DOWNLOADED=1
+elif fetch_file "$FALLBACK_URL" "$TMP_FILE" 2>/dev/null && [ -s "$TMP_FILE" ]; then
+  DOWNLOADED=1
 fi
 
-mkdir -p "$INSTALL_DIR"
-
-BINARY_PATH="$TMP_DIR/$BINARY_NAME"
-
-# Check if run inside existing repository with cmd/pagebox/main.go
-if [ -f "./cmd/pagebox/main.go" ] && command -v go >/dev/null 2>&1; then
-    log_info "Building from local repository source..."
-    go build -o "$BINARY_PATH" ./cmd/pagebox
-else
-    # Try downloading from GitHub Releases first
-    RELEASE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download/pagebox-${OS}-${ARCH}"
-    REL_TMP="$TMP_DIR/pagebox-release"
-    HTTP_CODE=$(curl -sL -w "%{http_code}" -o "$REL_TMP" "$RELEASE_URL" 2>/dev/null || echo "000")
-
-    if [ "$HTTP_CODE" = "200" ] && [ -s "$REL_TMP" ]; then
-        mv "$REL_TMP" "$BINARY_PATH"
-        log_ok "Downloaded prebuilt binary from GitHub Releases"
+if [ "$DOWNLOADED" = "0" ]; then
+  # Fallback to source compilation if binary release is not published yet
+  if command -v go >/dev/null 2>&1; then
+    log_warn "Pre-built binary release not yet available. Compiling from source..."
+    if [ -f "./cmd/pagebox/main.go" ]; then
+      go build -o "$TMP_FILE" ./cmd/pagebox
+      DOWNLOADED=1
     else
-        rm -f "$REL_TMP"
-        # If release binary is not available, check for Go to build from source
-        if command -v go >/dev/null 2>&1; then
-            log_info "Building from master branch source..."
-            ARCHIVE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/master.tar.gz"
-            log_info "Fetching latest source from $ARCHIVE_URL..."
-            curl -fsSL "$ARCHIVE_URL" | tar -xz -C "$TMP_DIR"
-            (
-                cd "$TMP_DIR/${REPO_NAME}-master"
-                go build -o "$BINARY_PATH" ./cmd/pagebox
-            )
-        else
-            log_err "Pre-built binary is not available yet, and Go compiler was not found."
-            log_err "Please install Go (https://go.dev/dl/) and re-run this script, or clone the repository and run 'make'."
-            exit 1
+      ARCHIVE_URL="https://github.com/${REPO}/archive/refs/heads/master.tar.gz"
+      log_step "Fetching source from ${ARCHIVE_URL}..."
+      fetch_file "$ARCHIVE_URL" "${TMP_DIR}/source.tar.gz" 2>/dev/null || true
+      if [ -f "${TMP_DIR}/source.tar.gz" ] && [ -s "${TMP_DIR}/source.tar.gz" ]; then
+        tar -xz -C "$TMP_DIR" -f "${TMP_DIR}/source.tar.gz"
+        SOURCE_DIR=$(find "$TMP_DIR" -maxdepth 1 -type d -name "pagebox*" | head -n 1)
+        if [ -n "$SOURCE_DIR" ] && [ -d "$SOURCE_DIR/cmd/pagebox" ]; then
+          (
+            cd "$SOURCE_DIR"
+            go build -o "$TMP_FILE" ./cmd/pagebox
+          )
+          DOWNLOADED=1
         fi
+      fi
     fi
+  fi
 fi
 
-chmod +x "$BINARY_PATH"
+if [ "$DOWNLOADED" = "0" ] || [ ! -s "$TMP_FILE" ]; then
+  log_error "Failed to obtain binary for pagebox v${VERSION}."
+  log_warn "If this version is newly tagged, the GitHub release artifacts may still be compiling."
+  exit 1
+fi
 
-# Install binary
-DEST_FILE="$INSTALL_DIR/$BINARY_NAME"
-log_info "Installing $BINARY_NAME to $INSTALL_DIR..."
+chmod +x "$TMP_FILE"
 
-if [ -w "$INSTALL_DIR" ]; then
-    mv "$BINARY_PATH" "$DEST_FILE"
+# 8. Install / Replace binary
+log_step "Installing to ${BOLD}${TARGET_BIN}${RESET}..."
+
+if [ "${USE_SUDO:-0}" = "1" ]; then
+  sudo rm -f "$TARGET_BIN"
+  sudo mv "$TMP_FILE" "$TARGET_BIN"
+  sudo chmod 755 "$TARGET_BIN"
 else
-    if command -v sudo >/dev/null 2>&1; then
-        log_info "Elevated permissions required to write to $INSTALL_DIR"
-        sudo mv "$BINARY_PATH" "$DEST_FILE"
-    else
-        log_err "Cannot write to $INSTALL_DIR and sudo is not available."
-        exit 1
-    fi
+  mkdir -p "$TARGET_DIR"
+  rm -f "$TARGET_BIN"
+  mv "$TMP_FILE" "$TARGET_BIN"
+  chmod 755 "$TARGET_BIN"
 fi
 
-log_ok "Pagebox installed successfully to $DEST_FILE"
+if [ "$ACTION" = "Updated" ] && [ -n "$CURRENT_VER" ]; then
+  log_info "pagebox successfully updated (v${CURRENT_VER} -> v${VERSION})!"
+else
+  log_info "pagebox v${VERSION} installed successfully!"
+fi
 
-# PATH check
+# 9. Check if TARGET_DIR is in PATH
+PATH_ALREADY_CONFIGURED=0
 case ":$PATH:" in
-    *":$INSTALL_DIR:"*)
-        ;;
-    *)
-        echo
-        log_warn "$INSTALL_DIR is not in your PATH."
-        log_info "Add it to your PATH by adding this line to your shell profile (~/.bashrc or ~/.zshrc):"
-        printf "\n  ${BOLD}export PATH=\"%s:\$PATH\"${RESET}\n\n" "$INSTALL_DIR"
-        ;;
+  *":$TARGET_DIR:"*) PATH_ALREADY_CONFIGURED=1 ;;
 esac
 
-echo
-log_info "Get started by running:"
-printf "  ${BOLD}pagebox init${RESET}\n"
-printf "  ${BOLD}pagebox daemon install${RESET}\n"
-echo
+detect_shell_rc() {
+  case "$(basename "${SHELL:-}")" in
+    zsh)
+      echo "${HOME}/.zshrc"
+      ;;
+    bash)
+      if [ -f "${HOME}/.bashrc" ]; then
+        echo "${HOME}/.bashrc"
+      elif [ -f "${HOME}/.bash_profile" ]; then
+        echo "${HOME}/.bash_profile"
+      else
+        echo "${HOME}/.profile"
+      fi
+      ;;
+    fish)
+      echo "${HOME}/.config/fish/config.fish"
+      ;;
+    *)
+      if [ -f "${HOME}/.zshrc" ]; then
+        echo "${HOME}/.zshrc"
+      elif [ -f "${HOME}/.bashrc" ]; then
+        echo "${HOME}/.bashrc"
+      elif [ -f "${HOME}/.bash_profile" ]; then
+        echo "${HOME}/.bash_profile"
+      elif [ -f "${HOME}/.profile" ]; then
+        echo "${HOME}/.profile"
+      else
+        echo ""
+      fi
+      ;;
+  esac
+}
 
-if grep -qi "microsoft\|wsl" /proc/version 2>/dev/null || [ -n "$WSL_DISTRO_NAME" ]; then
-    log_info "WSL environment detected:"
-    printf "  · Windows browser can access Pagebox at: ${BOLD}http://localhost${RESET}\n"
-    printf "  · To use ${BOLD}http://pagebox.local${RESET} on Windows, add '127.0.0.1 pagebox.local' to C:\\Windows\\System32\\drivers\\etc\\hosts\n"
-    echo
+SHELL_RC="$(detect_shell_rc)"
+
+has_path_configured() {
+  rc="$1"
+  dir="$2"
+  [ -f "$rc" ] && grep -Fq "$dir" "$rc"
+}
+
+if [ "$PATH_ALREADY_CONFIGURED" = "0" ]; then
+  log_warn "${TARGET_DIR} is not in your current PATH."
+  if [ -n "$SHELL_RC" ]; then
+    if has_path_configured "$SHELL_RC" "$TARGET_DIR"; then
+      log_info "PATH addition already present in ${SHELL_RC}."
+    else
+      printf "\n# Added by pagebox installer\nexport PATH=\"%s:\$PATH\"\n" "$TARGET_DIR" >> "$SHELL_RC"
+      log_info "Added ${TARGET_DIR} to PATH in ${SHELL_RC}"
+    fi
+  else
+    printf "   Add it by running:\n"
+    printf "     export PATH=\"%s:\$PATH\"\n\n" "$TARGET_DIR"
+  fi
 fi
+
+# 10. Next Steps / WSL Hint
+echo
+printf "Get started with %b:\n\n" "${BOLD}pagebox${RESET}"
+printf "  ${AMBER}pagebox init${RESET}            # configure docs folder & S3 storage\n"
+printf "  ${AMBER}pagebox serve${RESET}           # run foreground server & sync loop\n"
+printf "  ${AMBER}pagebox daemon install${RESET}  # run background sync daemon as OS service\n"
+
+if grep -qi "microsoft\|wsl" /proc/version 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]; then
+  printf "\n${AMBER}WSL Environment Detected:${RESET}\n"
+  printf "  · Open documents on Windows at: ${BOLD}http://localhost:8730${RESET}\n"
+  printf "  · To use ${BOLD}http://pagebox.local:8730${RESET}, map '127.0.0.1 pagebox.local' in Windows hosts\n"
+fi
+echo

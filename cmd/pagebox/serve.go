@@ -80,6 +80,10 @@ var serveCmd = &cobra.Command{
 			}
 		}()
 
+		if !noUpdate {
+			go autoUpdate(version)
+		}
+
 		srv := server.New(cfg, idx, store)
 		
 		port := cfg.Port

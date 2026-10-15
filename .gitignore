@@ -1,6 +1,6 @@
 # Binaries & build artifacts
 pb
-pagebox
+/pagebox
 /bin/
 /dist/
 *.exe
