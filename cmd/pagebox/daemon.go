@@ -58,7 +58,7 @@ var daemonInstallCmd = &cobra.Command{
 		cfg, _ := pbconfig.Load()
 		daemonPort := cfg.Port
 		if daemonPort <= 0 {
-			daemonPort = 8732
+			daemonPort = 8730
 		}
 
 		sp := ui.NewSpinner("Installing service")
@@ -74,9 +74,9 @@ var daemonInstallCmd = &cobra.Command{
 			serviceType = "launchd LaunchAgent"
 		}
 
-		localAddr := fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
+		localAddr := fmt.Sprintf("http://localhost:%d", cfg.Port)
 		if cfg.Port == 80 {
-			localAddr = "http://127.0.0.1"
+			localAddr = "http://localhost"
 		}
 
 		ui.PrintOk("daemon installed and started", "", nil)

@@ -27,7 +27,7 @@ import (
 var servePort int
 
 func init() {
-	serveCmd.Flags().IntVarP(&servePort, "port", "p", 8732, "port to serve on")
+	serveCmd.Flags().IntVarP(&servePort, "port", "p", 8730, "port to serve on")
 }
 
 var serveCmd = &cobra.Command{
@@ -84,7 +84,7 @@ var serveCmd = &cobra.Command{
 		
 		port := cfg.Port
 		if port <= 0 {
-			port = 8732
+			port = 8730
 		}
 		if cmd.Flags().Changed("port") {
 			port = servePort
@@ -95,7 +95,7 @@ var serveCmd = &cobra.Command{
 		ln, err := net.Listen("tcp", addr)
 		if err != nil && cfg.Port == 80 && strings.Contains(err.Error(), "permission denied") {
 			// Unprivileged user fallback
-			fallbackPort := 8732
+			fallbackPort := 8730
 			fallbackAddr := fmt.Sprintf("%s:%d", cfg.Bind, fallbackPort)
 			ln2, err2 := net.Listen("tcp", fallbackAddr)
 			if err2 == nil {
@@ -114,7 +114,7 @@ var serveCmd = &cobra.Command{
 				running, _, _ := daemon.Status()
 				if running && cfg.Port == 80 {
 					ui.PrintErr("port 80 is already in use by the pagebox background daemon", "", nil)
-					ui.Hint("pagebox serve runs on port 8732 by default. Run without '--port 80':", nil)
+					ui.Hint("pagebox serve runs on port 8730 by default. Run without '--port 80':", nil)
 					ui.Command("pagebox serve", nil)
 					os.Exit(1)
 				}
@@ -128,9 +128,9 @@ var serveCmd = &cobra.Command{
 			Handler: srv,
 		}
 
-		displayAddr := fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
+		displayAddr := fmt.Sprintf("http://localhost:%d", cfg.Port)
 		if cfg.Port == 80 {
-			displayAddr = "http://127.0.0.1"
+			displayAddr = "http://localhost"
 		}
 
 		ui.Heading("pagebox serve", nil, os.Stdout)
@@ -158,7 +158,11 @@ var serveCmd = &cobra.Command{
 		ui.PrintInfo("running in foreground", "Press Ctrl+C to stop", nil)
 
 		go func() {
-			log.Printf("server listening on http://%s", addr)
+			listenHost := "localhost"
+			if cfg.Bind != "0.0.0.0" && cfg.Bind != "" && cfg.Bind != "127.0.0.1" {
+				listenHost = cfg.Bind
+			}
+			log.Printf("server listening on http://%s:%d", listenHost, cfg.Port)
 			if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("server error: %v", err)
 			}
