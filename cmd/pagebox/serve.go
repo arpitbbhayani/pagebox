@@ -17,11 +17,18 @@ import (
 	"github.com/spf13/cobra"
 
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
+	"github.com/arpitbhayani/pagebox/internal/daemon"
 	"github.com/arpitbhayani/pagebox/internal/index"
 	"github.com/arpitbhayani/pagebox/internal/server"
 	"github.com/arpitbhayani/pagebox/internal/storage"
 	"github.com/arpitbhayani/pagebox/internal/ui"
 )
+
+var servePort int
+
+func init() {
+	serveCmd.Flags().IntVarP(&servePort, "port", "p", 8732, "port to serve on")
+}
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
@@ -75,11 +82,17 @@ var serveCmd = &cobra.Command{
 
 		srv := server.New(cfg, idx, store)
 		
+		port := 8732
+		if cmd.Flags().Changed("port") {
+			port = servePort
+		}
+		cfg.Port = port
+
 		addr := fmt.Sprintf("%s:%d", cfg.Bind, cfg.Port)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil && cfg.Port == 80 && strings.Contains(err.Error(), "permission denied") {
 			// Unprivileged user fallback
-			fallbackPort := 8080
+			fallbackPort := 8732
 			fallbackAddr := fmt.Sprintf("%s:%d", cfg.Bind, fallbackPort)
 			ln2, err2 := net.Listen("tcp", fallbackAddr)
 			if err2 == nil {
@@ -94,6 +107,15 @@ var serveCmd = &cobra.Command{
 				os.Exit(1)
 			}
 		} else if err != nil {
+			if strings.Contains(err.Error(), "address already in use") {
+				running, _, _ := daemon.Status()
+				if running && cfg.Port == 80 {
+					ui.PrintErr("port 80 is already in use by the pagebox background daemon", "", nil)
+					ui.Hint("pagebox serve runs on port 8732 by default. Run without '--port 80':", nil)
+					ui.Command("pagebox serve", nil)
+					os.Exit(1)
+				}
+			}
 			ui.PrintErr(fmt.Sprintf("failed to bind to %s", addr), err.Error(), nil)
 			os.Exit(1)
 		}
@@ -103,14 +125,32 @@ var serveCmd = &cobra.Command{
 			Handler: srv,
 		}
 
+		displayAddr := fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
+		if cfg.Port == 80 {
+			displayAddr = "http://127.0.0.1"
+		}
+
 		ui.Heading("pagebox serve", nil, os.Stdout)
 		ui.KV("documents", cfg.DocsDir, 12, os.Stdout)
-		ui.KV("address", fmt.Sprintf("http://%s", addr), 12, os.Stdout)
+		ui.KV("address", displayAddr, 12, os.Stdout)
 		if cfg.Host != "" && cfg.Host != "127.0.0.1" && cfg.Host != "localhost" {
-			ui.KV("host", fmt.Sprintf("http://%s", cfg.Host), 12, os.Stdout)
+			if cfg.Port == 80 {
+				ui.KV("host", fmt.Sprintf("http://%s", cfg.Host), 12, os.Stdout)
+			} else {
+				ui.KV("host", fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port), 12, os.Stdout)
+			}
+		}
+		if isWSL() {
+			for _, ip := range getHostIPs() {
+				wURL := fmt.Sprintf("http://%s:%d", ip, cfg.Port)
+				if cfg.Port == 80 {
+					wURL = fmt.Sprintf("http://%s", ip)
+				}
+				ui.KV("windows ip", wURL, 12, os.Stdout)
+			}
 		}
 		ui.Rule(os.Stdout)
-		ui.PrintOk(fmt.Sprintf("serving on http://%s", addr), "", nil)
+		ui.PrintOk(fmt.Sprintf("serving on %s", displayAddr), "", nil)
 		ui.PrintInfo("watching folder", cfg.DocsDir, nil)
 		ui.PrintInfo("running in foreground", "Press Ctrl+C to stop", nil)
 

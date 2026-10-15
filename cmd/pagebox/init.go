@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,9 +25,17 @@ var initCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		ui.Heading("pagebox init", nil, os.Stdout)
 
-		cfg := pbconfig.DefaultConfig()
+		cfg, err := pbconfig.Load()
+		if err != nil {
+			cfg = pbconfig.DefaultConfig()
+		}
 
-		backend, err := ui.Prompt("storage mode [s3 / local]", "s3")
+		backendDefault := cfg.Backend
+		if backendDefault == "" {
+			backendDefault = "s3"
+		}
+
+		backend, err := ui.Prompt("storage mode [s3 / local]", backendDefault)
 		if err != nil {
 			ui.PrintErr("cancelled", err.Error(), nil)
 			os.Exit(0)
@@ -44,7 +53,14 @@ var initCmd = &cobra.Command{
 			// Check AWS credentials
 			s := ui.NewSpinner("Checking AWS credentials")
 			authCtx, authCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			awscfg, err := config.LoadDefaultConfig(authCtx)
+			var opts []func(*config.LoadOptions) error
+			if cfg.Region != "" {
+				opts = append(opts, config.WithRegion(cfg.Region))
+			}
+			if cfg.AWSProfile != "" {
+				opts = append(opts, config.WithSharedConfigProfile(cfg.AWSProfile))
+			}
+			awscfg, err := config.LoadDefaultConfig(authCtx, opts...)
 			if err != nil {
 				authCancel()
 				s.Stop(false)
@@ -71,7 +87,7 @@ var initCmd = &cobra.Command{
 				cfg.Region = awscfg.Region
 			}
 
-			bucket, err := ui.Prompt("S3 bucket name", "")
+			bucket, err := ui.Prompt("S3 bucket name", cfg.Bucket)
 			if err != nil || bucket == "" {
 				if err == nil {
 					ui.PrintErr("cancelled", "bucket name is required for s3 backend", nil)
@@ -142,7 +158,15 @@ var initCmd = &cobra.Command{
 			cfg.Prefix = ""
 		}
 
-		docsDir, _ := ui.Prompt("docs directory", cfg.DocsDir)
+		docsDirDefault := cfg.DocsDir
+		if docsDirDefault == "" {
+			home, _ := os.UserHomeDir()
+			docsDirDefault = filepath.Join(home, "pagebox")
+		}
+		docsDir, _ := ui.Prompt("docs directory", docsDirDefault)
+		if docsDir == "" {
+			docsDir = docsDirDefault
+		}
 		cfg.DocsDir = docsDir
 
 		// Create store and save config

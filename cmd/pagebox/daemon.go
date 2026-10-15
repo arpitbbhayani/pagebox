@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,16 +55,20 @@ var daemonInstallCmd = &cobra.Command{
 		}
 		binPath, _ = filepath.Abs(binPath)
 
+		cfg, _ := pbconfig.Load()
+		daemonPort := cfg.Port
+		if daemonPort <= 0 {
+			daemonPort = 80
+		}
+
 		sp := ui.NewSpinner("Installing service")
-		err = daemon.Install(binPath)
+		err = daemon.Install(binPath, daemonPort)
 		sp.Stop(err == nil)
 
 		if err != nil {
 			ui.PrintErr("failed to install daemon", err.Error(), nil)
 			os.Exit(1)
 		}
-
-		cfg, _ := pbconfig.Load()
 		serviceType := "systemd user service"
 		if runtime.GOOS == "darwin" {
 			serviceType = "launchd LaunchAgent"
@@ -82,6 +87,15 @@ var daemonInstallCmd = &cobra.Command{
 		ui.KV("address", localAddr, 16, nil)
 		if cfg.Host != "" && cfg.Host != "127.0.0.1" && cfg.Host != "localhost" {
 			ui.KV("hostname", fmt.Sprintf("http://%s", cfg.Host), 16, nil)
+		}
+		if isWSL() {
+			for _, ip := range getHostIPs() {
+				wURL := fmt.Sprintf("http://%s:%d", ip, daemonPort)
+				if daemonPort == 80 {
+					wURL = fmt.Sprintf("http://%s", ip)
+				}
+				ui.KV("windows ip", wURL, 16, nil)
+			}
 		}
 		ui.Rule(nil)
 		ui.Hint("management commands:", nil)
@@ -199,4 +213,38 @@ func isWSL() bool {
 		}
 	}
 	return false
+}
+
+func getHostIPs() []string {
+	var ips []string
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			ip = ip.To4()
+			if ip != nil {
+				ips = append(ips, ip.String())
+			}
+		}
+	}
+	return ips
 }

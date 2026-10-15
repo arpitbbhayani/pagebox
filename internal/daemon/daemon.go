@@ -10,12 +10,12 @@ import (
 	"time"
 )
 
-func Install(binPath string) error {
+func Install(binPath string, port int) error {
 	switch runtime.GOOS {
 	case "darwin":
-		return installLaunchd(binPath)
+		return installLaunchd(binPath, port)
 	case "linux":
-		return installSystemd(binPath)
+		return installSystemd(binPath, port)
 	default:
 		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
 	}
@@ -43,7 +43,7 @@ func Status() (bool, string, error) {
 	}
 }
 
-func installLaunchd(binPath string) error {
+func installLaunchd(binPath string, port int) error {
 	home, _ := os.UserHomeDir()
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", "me.arpitbhayani.pagebox.plist")
 	
@@ -57,13 +57,15 @@ func installLaunchd(binPath string) error {
 	<array>
 		<string>%s</string>
 		<string>serve</string>
+		<string>--port</string>
+		<string>%d</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
 </dict>
-</plist>`, binPath)
+</plist>`, binPath, port)
 
 	os.MkdirAll(filepath.Dir(plistPath), 0755)
 	if err := os.WriteFile(plistPath, []byte(plist), 0644); err != nil {
@@ -95,7 +97,7 @@ func statusLaunchd() (bool, string, error) {
 	return false, "", nil
 }
 
-func installSystemd(binPath string) error {
+func installSystemd(binPath string, port int) error {
 	home, _ := os.UserHomeDir()
 	serviceDir := filepath.Join(home, ".config", "systemd", "user")
 	os.MkdirAll(serviceDir, 0755)
@@ -106,13 +108,13 @@ Description=Pagebox Sync Daemon
 After=network.target
 
 [Service]
-ExecStart=%s serve
+ExecStart=%s serve --port %d
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=default.target
-`, binPath)
+`, binPath, port)
 
 	if err := os.WriteFile(servicePath, []byte(service), 0644); err != nil {
 		return err
