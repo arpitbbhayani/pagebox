@@ -82,7 +82,10 @@ var serveCmd = &cobra.Command{
 
 		srv := server.New(cfg, idx, store)
 		
-		port := 8732
+		port := cfg.Port
+		if port <= 0 {
+			port = 8732
+		}
 		if cmd.Flags().Changed("port") {
 			port = servePort
 		}

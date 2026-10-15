@@ -36,3 +36,8 @@ pagebox daemon install
 - `pagebox uninstall` — stop and uninstall the background service
 
 Use `pagebox help` to see all available commands.
+
+## documentation
+
+- [Frequently Asked Questions (FAQ)](docs/faq.md) — WSL setup, port configuration, daemon management, and troubleshooting.
+

@@ -58,7 +58,7 @@ var daemonInstallCmd = &cobra.Command{
 		cfg, _ := pbconfig.Load()
 		daemonPort := cfg.Port
 		if daemonPort <= 0 {
-			daemonPort = 80
+			daemonPort = 8732
 		}
 
 		sp := ui.NewSpinner("Installing service")
