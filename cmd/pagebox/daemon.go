@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
 	"github.com/arpitbhayani/pagebox/internal/daemon"
 	"github.com/arpitbhayani/pagebox/internal/ui"
 )
@@ -61,16 +63,39 @@ var daemonInstallCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		cfg, _ := pbconfig.Load()
+		serviceType := "systemd user service"
+		if runtime.GOOS == "darwin" {
+			serviceType = "launchd LaunchAgent"
+		}
+
+		localAddr := fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
+		if cfg.Port == 80 {
+			localAddr = "http://127.0.0.1"
+		}
+
 		ui.PrintOk("daemon installed and started", "", nil)
-		ui.Hint("check status with:", nil)
-		ui.Command("pagebox daemon status", nil)
+		ui.Heading("daemon summary", nil, nil)
+		ui.KV("service", serviceType, 16, nil)
+		ui.KV("status", "running in background", 16, nil)
+		ui.KV("documents", cfg.DocsDir, 16, nil)
+		ui.KV("address", localAddr, 16, nil)
+		if cfg.Host != "" && cfg.Host != "127.0.0.1" && cfg.Host != "localhost" {
+			ui.KV("hostname", fmt.Sprintf("http://%s", cfg.Host), 16, nil)
+		}
+		ui.Rule(nil)
+		ui.Hint("management commands:", nil)
+		ui.Bullet("view service status:   pagebox daemon status", nil)
+		ui.Bullet("stream live logs:      pagebox daemon logs", nil)
+		ui.Bullet("stop & uninstall:      pagebox uninstall", nil)
 	},
 }
 
 var daemonUninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Remove the service",
+	Short: "Stop and remove the background service",
 	Run: func(cmd *cobra.Command, args []string) {
+		ui.Heading("daemon uninstall", nil, nil)
 		noSudo, _ := cmd.Flags().GetBool("no-sudo")
 
 		sp := ui.NewSpinner("Removing service")
@@ -92,7 +117,15 @@ var daemonUninstallCmd = &cobra.Command{
 			}
 			ui.PrintOk("cleaned up privileged settings", "", nil)
 		}
+
+		ui.Hint("pagebox background service has been completely uninstalled.", nil)
 	},
+}
+
+var uninstallCmd = &cobra.Command{
+	Use:   "uninstall",
+	Short: "Stop and uninstall the background service",
+	Run:   daemonUninstallCmd.Run,
 }
 
 var daemonStatusCmd = &cobra.Command{

@@ -52,6 +52,9 @@ func main() {
 	daemonCmd.AddCommand(daemonLogsCmd)
 	rootCmd.AddCommand(daemonCmd)
 
+	uninstallCmd.Flags().Bool("no-sudo", false, "skip privileged cleanup")
+	rootCmd.AddCommand(uninstallCmd)
+
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(updateCmd)

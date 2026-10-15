@@ -29,7 +29,7 @@ func DefaultConfig() Config {
 		DocsDir:      filepath.Join(home, "pagebox"),
 		Host:         "pagebox.local",
 		Port:         80,
-		Bind:         "127.0.0.1",
+		Bind:         "0.0.0.0",
 		PollInterval: "5m",
 		PushDebounce: "10s",
 		AWSProfile:   "default",

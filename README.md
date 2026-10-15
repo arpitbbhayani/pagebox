@@ -31,6 +31,8 @@ pagebox daemon install
 - `pagebox pull` — fetch changes from S3
 - `pagebox push` — push local changes to S3
 - `pagebox status` — view unpushed or diverged changes
-- `pagebox doctor` — check system and AWS configuration
+- `pagebox daemon status` — check background service status
+- `pagebox daemon logs` — tail live background service logs
+- `pagebox uninstall` — stop and uninstall the background service
 
 Use `pagebox help` to see all available commands.
