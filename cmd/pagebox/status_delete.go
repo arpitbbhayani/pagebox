@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	
 	"github.com/spf13/cobra"
 	
@@ -18,6 +19,12 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Summary of dirty, diverged, and stale documents",
 	Run: func(cmd *cobra.Command, args []string) {
+		cfg, err := pbconfig.Load()
+		if err != nil {
+			ui.PrintErr("failed to load config", err.Error(), nil)
+			os.Exit(1)
+		}
+
 		idx, err := index.NewStore()
 		if err != nil {
 			ui.PrintErr("failed to open index", err.Error(), nil)
@@ -41,7 +48,41 @@ var statusCmd = &cobra.Command{
 			}
 		}
 
-		totalActionable := len(dirty) + len(diverged) + len(stale) + len(missing)
+		// Find untracked files in cfg.DocsDir
+		var untracked []string
+		if cfg.DocsDir != "" {
+			_ = filepath.Walk(cfg.DocsDir, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return nil
+				}
+				if info.IsDir() {
+					if strings.HasPrefix(info.Name(), ".") && path != cfg.DocsDir {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				if strings.HasPrefix(info.Name(), ".") {
+					return nil
+				}
+
+				rel, err := filepath.Rel(cfg.DocsDir, path)
+				if err != nil {
+					return nil
+				}
+				slashRel := filepath.ToSlash(rel)
+				id := slashRel
+				if strings.HasSuffix(slashRel, ".html") {
+					id = strings.TrimSuffix(slashRel, ".html")
+				}
+
+				if _, ok := idx.Get(id); !ok {
+					untracked = append(untracked, slashRel)
+				}
+				return nil
+			})
+		}
+
+		totalActionable := len(dirty) + len(diverged) + len(stale) + len(missing) + len(untracked)
 		if totalActionable == 0 {
 			ui.PrintOk("everything is up to date", "", nil)
 			os.Exit(0)
@@ -76,6 +117,15 @@ var statusCmd = &cobra.Command{
 			}
 			ui.Hint("push local changes:", nil)
 			ui.Command("pagebox push", nil)
+		}
+
+		if len(untracked) > 0 {
+			ui.Heading("untracked", &[]int{len(untracked)}[0], nil)
+			for _, u := range untracked {
+				ui.PrintStep(u, "not in index", nil)
+			}
+			ui.Hint("add files to index:", nil)
+			ui.Command("pagebox add", nil)
 		}
 	},
 }
@@ -127,7 +177,7 @@ var deleteCmd = &cobra.Command{
 		idx.Delete(id)
 
 		// Remove local file
-		localPath := filepath.Join(cfg.DocsDir, entry.Key)
+		localPath := filepath.Join(cfg.DocsDir, filepath.FromSlash(entry.Key))
 		os.Remove(localPath)
 
 		sp.Stop(true)

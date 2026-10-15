@@ -60,6 +60,7 @@ func main() {
 	}
 
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(addCmd)
 	rootCmd.AddCommand(listCmd)
 	pullCmd.Flags().Bool("force", false, "overwrite dirty/diverged files")
 	rootCmd.AddCommand(pullCmd)

@@ -58,7 +58,7 @@ func pushOne(id string, cfg pbconfig.Config, store storage.Storage, idx *index.S
 		return
 	}
 
-	srcPath := filepath.Join(cfg.DocsDir, entry.Key)
+	srcPath := filepath.Join(cfg.DocsDir, filepath.FromSlash(entry.Key))
 	f, err := os.Open(srcPath)
 	if err != nil {
 		ui.PrintErr("could not open local file", err.Error(), nil)

@@ -99,49 +99,9 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	tree := buildFileTree(entries)
 	var rows strings.Builder
-	for _, e := range entries {
-		state := string(e.State)
-		if state == "" {
-			state = "cached"
-		}
-		escapedID := html.EscapeString(e.ID)
-		urlPath := "/" + url.PathEscape(e.ID)
-
-		sizeStr := formatBytes(e.Size)
-		timeStr := formatRelativeTime(e.LastSyncedAt)
-
-		rows.WriteString(fmt.Sprintf(`
-		<tr class="aui-tr" data-id="%s" data-state="%s">
-			<td class="aui-td-doc">
-				<a href="%s" class="aui-doc-link">
-					<span class="aui-doc-glyph">›</span>
-					<span class="aui-doc-name">%s</span>
-				</a>
-			</td>
-			<td class="aui-td-state">
-				<span class="aui-pill aui-pill-%s">
-					<span class="aui-pill-dot"></span>
-					<span>%s</span>
-				</span>
-			</td>
-			<td class="aui-td-size aui-mono">%s</td>
-			<td class="aui-td-time aui-mono">%s</td>
-			<td class="aui-td-action">
-				<a href="%s" class="aui-action-btn">Open →</a>
-			</td>
-		</tr>`,
-			escapedID,
-			html.EscapeString(state),
-			urlPath,
-			escapedID,
-			html.EscapeString(state),
-			html.EscapeString(state),
-			html.EscapeString(sizeStr),
-			html.EscapeString(timeStr),
-			urlPath,
-		))
-	}
+	renderTreeRows(tree, &rows)
 
 	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
@@ -277,11 +237,12 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		});
 	}
 
-	// Filter and Search logic
+	// Filter and Search logic with Folder Tree support
 	var searchInput = document.getElementById('search-input');
 	var filterBtns = document.querySelectorAll('.aui-filter-btn');
 	var tbody = document.getElementById('doc-tbody');
-	var rows = tbody.querySelectorAll('.aui-tr');
+	var folderRows = tbody.querySelectorAll('.aui-tr-folder');
+	var fileRows = tbody.querySelectorAll('.aui-tr-file');
 	var emptyState = document.getElementById('empty-state');
 	var activeFilter = 'all';
 
@@ -289,27 +250,147 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		var term = (searchInput.value || '').trim().toLowerCase();
 		var visibleCount = 0;
 
-		rows.forEach(function(row) {
-			var id = (row.getAttribute('data-id') || '').toLowerCase();
-			var state = (row.getAttribute('data-state') || '').toLowerCase();
+		if (term) {
+			// Search mode: show all matching files and reveal ancestor folders
+			var matchingFolders = new Set();
 
-			var matchesFilter = (activeFilter === 'all') || (state === activeFilter);
-			var matchesSearch = !term || id.indexOf(term) !== -1;
+			fileRows.forEach(function(row) {
+				var id = (row.getAttribute('data-id') || '').toLowerCase();
+				var name = (row.getAttribute('data-name') || '').toLowerCase();
+				var state = (row.getAttribute('data-state') || '').toLowerCase();
 
-			if (matchesFilter && matchesSearch) {
-				row.style.display = '';
-				visibleCount++;
-			} else {
-				row.style.display = 'none';
+				var matchesFilter = (activeFilter === 'all') || (state === activeFilter);
+				var matchesSearch = id.indexOf(term) !== -1 || name.indexOf(term) !== -1;
+
+				if (matchesFilter && matchesSearch) {
+					row.style.display = '';
+					visibleCount++;
+					var parent = row.getAttribute('data-parent-folder') || '';
+					var parts = parent.split('/');
+					var cur = '';
+					for (var i = 0; i < parts.length; i++) {
+						if (parts[i]) {
+							cur = cur ? (cur + '/' + parts[i]) : parts[i];
+							matchingFolders.add(cur);
+						}
+					}
+				} else {
+					row.style.display = 'none';
+				}
+			});
+
+			folderRows.forEach(function(fRow) {
+				var fPath = fRow.getAttribute('data-folder-path');
+				if (matchingFolders.has(fPath)) {
+					fRow.style.display = '';
+					var caret = fRow.querySelector('.aui-folder-caret');
+					if (caret) caret.textContent = '▾';
+				} else {
+					fRow.style.display = 'none';
+				}
+			});
+		} else {
+			// Tree mode: honor folder expand/collapse and active filter
+			var collapsed = new Set();
+			folderRows.forEach(function(fRow) {
+				if (fRow.getAttribute('data-expanded') === 'false') {
+					collapsed.add(fRow.getAttribute('data-folder-path'));
+				}
+			});
+
+			var filterFolders = new Set();
+			if (activeFilter !== 'all') {
+				fileRows.forEach(function(row) {
+					var state = (row.getAttribute('data-state') || '').toLowerCase();
+					if (state === activeFilter) {
+						var parent = row.getAttribute('data-parent-folder') || '';
+						var parts = parent.split('/');
+						var cur = '';
+						for (var i = 0; i < parts.length; i++) {
+							if (parts[i]) {
+								cur = cur ? (cur + '/' + parts[i]) : parts[i];
+								filterFolders.add(cur);
+							}
+						}
+					}
+				});
 			}
-		});
 
-		if (visibleCount === 0) {
+			fileRows.forEach(function(row) {
+				var state = (row.getAttribute('data-state') || '').toLowerCase();
+				var matchesFilter = (activeFilter === 'all') || (state === activeFilter);
+				var parent = row.getAttribute('data-parent-folder') || '';
+
+				var isHiddenByParent = false;
+				var parts = parent.split('/');
+				var cur = '';
+				for (var i = 0; i < parts.length; i++) {
+					if (parts[i]) {
+						cur = cur ? (cur + '/' + parts[i]) : parts[i];
+						if (collapsed.has(cur)) {
+							isHiddenByParent = true;
+							break;
+						}
+					}
+				}
+
+				if (matchesFilter && !isHiddenByParent) {
+					row.style.display = '';
+					visibleCount++;
+				} else {
+					row.style.display = 'none';
+				}
+			});
+
+			folderRows.forEach(function(fRow) {
+				var fPath = fRow.getAttribute('data-folder-path');
+				var parent = fRow.getAttribute('data-parent-folder') || '';
+
+				if (activeFilter !== 'all' && !filterFolders.has(fPath)) {
+					fRow.style.display = 'none';
+					return;
+				}
+
+				var isHiddenByParent = false;
+				var parts = parent.split('/');
+				var cur = '';
+				for (var i = 0; i < parts.length; i++) {
+					if (parts[i]) {
+						cur = cur ? (cur + '/' + parts[i]) : parts[i];
+						if (collapsed.has(cur)) {
+							isHiddenByParent = true;
+							break;
+						}
+					}
+				}
+
+				if (isHiddenByParent) {
+					fRow.style.display = 'none';
+				} else {
+					fRow.style.display = '';
+					var isExpanded = fRow.getAttribute('data-expanded') !== 'false';
+					var caret = fRow.querySelector('.aui-folder-caret');
+					if (caret) caret.textContent = isExpanded ? '▾' : '▸';
+				}
+			});
+		}
+
+		if (visibleCount === 0 && (term || activeFilter !== 'all')) {
 			emptyState.style.display = 'block';
 		} else {
 			emptyState.style.display = 'none';
 		}
 	}
+
+	folderRows.forEach(function(fRow) {
+		fRow.addEventListener('click', function(e) {
+			var isExp = fRow.getAttribute('data-expanded') !== 'false';
+			fRow.setAttribute('data-expanded', isExp ? 'false' : 'true');
+			var caret = fRow.querySelector('.aui-folder-caret');
+			if (caret) caret.textContent = isExp ? '▸' : '▾';
+			applyFilters();
+		});
+	});
 
 	if (searchInput) {
 		searchInput.addEventListener('input', applyFilters);
@@ -337,9 +418,9 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 			searchInput.blur();
 			applyFilters();
 		} else if (e.key === 'Enter' && document.activeElement === searchInput) {
-			for (var i = 0; i < rows.length; i++) {
-				if (rows[i].style.display !== 'none') {
-					var link = rows[i].querySelector('.aui-doc-link');
+			for (var i = 0; i < fileRows.length; i++) {
+				if (fileRows[i].style.display !== 'none') {
+					var link = fileRows[i].querySelector('.aui-doc-link');
 					if (link) {
 						window.location.href = link.href;
 						break;
@@ -348,6 +429,8 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	});
+
+	applyFilters();
 })();
 </script>
 </body>
@@ -381,18 +464,25 @@ func (s *Server) serveDocument(w http.ResponseWriter, r *http.Request, id string
 
 	if !ok {
 		// Could be a new file on disk not yet in the index
-		localPath = filepath.Join(s.cfg.DocsDir, id+".html")
+		localPath = filepath.Join(s.cfg.DocsDir, filepath.FromSlash(id+".html"))
 		if _, err := os.Stat(localPath); err != nil {
-			s.serveNotFound(w, r, id)
-			return
+			localPath = filepath.Join(s.cfg.DocsDir, filepath.FromSlash(id))
+			if _, err2 := os.Stat(localPath); err2 != nil {
+				s.serveNotFound(w, r, id)
+				return
+			}
+		}
+		key := id
+		if strings.HasSuffix(localPath, ".html") && !strings.HasSuffix(key, ".html") {
+			key = id + ".html"
 		}
 		entry = index.Entry{
 			ID:    id,
-			Key:   id + ".html",
+			Key:   key,
 			State: index.StateNew,
 		}
 	} else {
-		localPath = filepath.Join(s.cfg.DocsDir, entry.Key)
+		localPath = filepath.Join(s.cfg.DocsDir, filepath.FromSlash(entry.Key))
 		// Lazy fetch if placeholder or stale
 		if entry.State == index.StatePlaceholder || entry.State == index.StateStale {
 			err := s.fetch(id, entry, localPath)
@@ -406,9 +496,13 @@ func (s *Server) serveDocument(w http.ResponseWriter, r *http.Request, id string
 		}
 	}
 
-	// If raw HTML document is requested (e.g. inside the iframe or direct download)
-	if r.URL.Query().Get("raw") == "1" || r.URL.Query().Get("raw") == "true" {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	isHTML := strings.HasSuffix(strings.ToLower(localPath), ".html") || strings.HasSuffix(strings.ToLower(localPath), ".htm") || strings.HasSuffix(strings.ToLower(entry.Key), ".html")
+
+	// If raw document or non-HTML file is requested (e.g. inside the iframe or direct download / asset)
+	if !isHTML || r.URL.Query().Get("raw") == "1" || r.URL.Query().Get("raw") == "true" {
+		if isHTML {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		}
 		http.ServeFile(w, r, localPath)
 		return
 	}
@@ -426,7 +520,8 @@ func (s *Server) serveDocumentViewer(w http.ResponseWriter, r *http.Request, id 
 	}
 
 	escapedID := html.EscapeString(id)
-	rawURL := "/" + url.PathEscape(id) + "?raw=1"
+	rawURL := "/" + escapeURLPath(id) + "?raw=1"
+	breadcrumbs := renderBreadcrumbs(id)
 
 	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
@@ -605,7 +700,7 @@ html, body {
 				<span class="aui-header-brand-name">/pagebox</span>
 			</a>
 			<span class="aui-header-sep">/</span>
-			<span class="aui-header-doc-title" id="header-doc-label">%s</span>
+			%s
 		</div>
 		<div class="aui-header-right">
 			<span class="aui-pill aui-pill-%s">
@@ -634,6 +729,10 @@ html, body {
 
 	<!-- Document Body: Loaded in an iframe -->
 	<div class="aui-frame-container">
+		<div id="frame-loader" class="aui-frame-loader">
+			<span class="aui-loader-spinner"></span>
+			<span>Streaming document...</span>
+		</div>
 		<iframe id="doc-frame" class="aui-doc-iframe" src="%s" title="%s"></iframe>
 	</div>
 </div>
@@ -668,6 +767,9 @@ html, body {
 
 	if (frame) {
 		frame.addEventListener('load', function() {
+			var loader = document.getElementById('frame-loader');
+			if (loader) { loader.style.display = 'none'; }
+
 			var theme = getTheme();
 			applyThemeToFrame(theme);
 
@@ -684,7 +786,7 @@ html, body {
 </html>`,
 		escapedID,
 		sharedCSS(),
-		escapedID,
+		breadcrumbs,
 		html.EscapeString(state),
 		html.EscapeString(state),
 		rawURL,
@@ -1365,6 +1467,91 @@ body {
 	color: var(--aui-text-muted);
 }
 
+/* Tree and Folder Styling */
+.aui-tr-folder {
+	cursor: pointer;
+	user-select: none;
+	background: var(--aui-bg-subtle);
+}
+
+.aui-tr-folder:hover {
+	background: var(--aui-bg-hover) !important;
+}
+
+.aui-folder-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-family: var(--aui-font-mono);
+	font-size: 13.5px;
+	font-weight: 600;
+	color: var(--aui-text);
+	text-decoration: none;
+	border: none;
+	background: transparent;
+	padding: 0;
+	cursor: pointer;
+}
+
+.aui-folder-caret {
+	font-size: 11px;
+	width: 14px;
+	display: inline-block;
+	color: var(--aui-crimson);
+	transition: transform 0.15s ease;
+}
+
+.aui-folder-svg {
+	color: var(--aui-amber);
+	flex-shrink: 0;
+}
+
+.aui-folder-name {
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.aui-folder-count {
+	font-size: 11px;
+	font-weight: 400;
+	color: var(--aui-text-faint);
+	margin-left: 2px;
+}
+
+.aui-breadcrumb-dir {
+	color: var(--aui-text-faint);
+	font-family: var(--aui-font-mono);
+	font-size: 13px;
+}
+
+.aui-frame-loader {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-family: var(--aui-font-mono);
+	font-size: 13px;
+	color: var(--aui-text-muted);
+	pointer-events: none;
+	z-index: 10;
+}
+
+.aui-loader-spinner {
+	width: 16px;
+	height: 16px;
+	border: 2px solid var(--aui-border);
+	border-top-color: var(--aui-crimson);
+	border-radius: 50%;
+	animation: aui-spin 0.8s linear infinite;
+}
+
+@keyframes aui-spin {
+	to { transform: rotate(360deg); }
+}
+
 /* Footer */
 .aui-footer {
 	border-top: 1px solid var(--aui-border);
@@ -1440,4 +1627,212 @@ func formatRelativeTime(t time.Time) string {
 		return fmt.Sprintf("%dd ago", int(diff.Hours()/24))
 	}
 	return t.Format("Jan 02")
+}
+
+type FileNode struct {
+	Name       string
+	Path       string
+	IsDir      bool
+	Entry      *index.Entry
+	Children   []*FileNode
+	DocCount   int
+	ParentPath string
+	Depth      int
+}
+
+func escapeURLPath(p string) string {
+	segments := strings.Split(p, "/")
+	for i, seg := range segments {
+		segments[i] = url.PathEscape(seg)
+	}
+	return strings.Join(segments, "/")
+}
+
+func renderBreadcrumbs(id string) string {
+	parts := strings.Split(id, "/")
+	if len(parts) <= 1 {
+		return fmt.Sprintf(`<span class="aui-header-doc-title" id="header-doc-label">%s</span>`, html.EscapeString(id))
+	}
+	var sb strings.Builder
+	for i, p := range parts {
+		if i == len(parts)-1 {
+			sb.WriteString(fmt.Sprintf(`<span class="aui-header-doc-title" id="header-doc-label">%s</span>`, html.EscapeString(p)))
+		} else {
+			sb.WriteString(fmt.Sprintf(`<span class="aui-breadcrumb-dir">%s</span><span class="aui-header-sep">/</span>`, html.EscapeString(p)))
+		}
+	}
+	return sb.String()
+}
+
+func buildFileTree(entries []index.Entry) *FileNode {
+	root := &FileNode{IsDir: true, Depth: -1}
+
+	for i := range entries {
+		e := entries[i]
+		parts := strings.Split(e.ID, "/")
+		curr := root
+
+		for d := 0; d < len(parts)-1; d++ {
+			part := parts[d]
+			dirPath := strings.Join(parts[:d+1], "/")
+			parentPath := ""
+			if d > 0 {
+				parentPath = strings.Join(parts[:d], "/")
+			}
+
+			var found *FileNode
+			for _, ch := range curr.Children {
+				if ch.IsDir && ch.Name == part {
+					found = ch
+					break
+				}
+			}
+			if found == nil {
+				found = &FileNode{
+					Name:       part,
+					Path:       dirPath,
+					IsDir:      true,
+					ParentPath: parentPath,
+					Depth:      d,
+				}
+				curr.Children = append(curr.Children, found)
+			}
+			curr = found
+		}
+
+		fileName := parts[len(parts)-1]
+		parentPath := ""
+		if len(parts) > 1 {
+			parentPath = strings.Join(parts[:len(parts)-1], "/")
+		}
+
+		fileNode := &FileNode{
+			Name:       fileName,
+			Path:       e.ID,
+			IsDir:      false,
+			Entry:      &e,
+			ParentPath: parentPath,
+			Depth:      len(parts) - 1,
+		}
+		curr.Children = append(curr.Children, fileNode)
+	}
+
+	computeDocCounts(root)
+	sortTree(root)
+	return root
+}
+
+func computeDocCounts(node *FileNode) int {
+	if !node.IsDir {
+		return 1
+	}
+	count := 0
+	for _, ch := range node.Children {
+		count += computeDocCounts(ch)
+	}
+	node.DocCount = count
+	return count
+}
+
+func sortTree(node *FileNode) {
+	sort.Slice(node.Children, func(i, j int) bool {
+		if node.Children[i].IsDir != node.Children[j].IsDir {
+			return node.Children[i].IsDir // folders first
+		}
+		return node.Children[i].Name < node.Children[j].Name
+	})
+	for _, ch := range node.Children {
+		if ch.IsDir {
+			sortTree(ch)
+		}
+	}
+}
+
+func renderTreeRows(node *FileNode, sb *strings.Builder) {
+	for _, ch := range node.Children {
+		if ch.IsDir {
+			padLeft := 16 + ch.Depth*22
+			escapedPath := html.EscapeString(ch.Path)
+			escapedParent := html.EscapeString(ch.ParentPath)
+			escapedName := html.EscapeString(ch.Name)
+			docPlural := "doc"
+			if ch.DocCount != 1 {
+				docPlural = "docs"
+			}
+			sb.WriteString(fmt.Sprintf(`
+		<tr class="aui-tr aui-tr-folder" data-folder-path="%s" data-parent-folder="%s" data-depth="%d" data-expanded="true">
+			<td class="aui-td-doc" style="padding-left: %dpx;">
+				<span class="aui-folder-toggle">
+					<span class="aui-folder-caret">▾</span>
+					<svg class="aui-folder-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+					<span class="aui-folder-name">%s</span>
+					<span class="aui-folder-count">(%d %s)</span>
+				</span>
+			</td>
+			<td class="aui-td-state">
+				<span class="aui-pill aui-mono-pill">folder</span>
+			</td>
+			<td class="aui-td-size aui-mono">—</td>
+			<td class="aui-td-time aui-mono">—</td>
+			<td class="aui-td-action"></td>
+		</tr>`,
+				escapedPath,
+				escapedParent,
+				ch.Depth,
+				padLeft,
+				escapedName,
+				ch.DocCount,
+				docPlural,
+			))
+			renderTreeRows(ch, sb)
+		} else {
+			e := ch.Entry
+			state := string(e.State)
+			if state == "" {
+				state = "cached"
+			}
+			escapedID := html.EscapeString(e.ID)
+			escapedName := html.EscapeString(ch.Name)
+			escapedParent := html.EscapeString(ch.ParentPath)
+			urlPath := "/" + escapeURLPath(e.ID)
+			sizeStr := formatBytes(e.Size)
+			timeStr := formatRelativeTime(e.LastSyncedAt)
+			padLeft := 16 + ch.Depth*22
+
+			sb.WriteString(fmt.Sprintf(`
+		<tr class="aui-tr aui-tr-file" data-id="%s" data-name="%s" data-state="%s" data-parent-folder="%s" data-depth="%d">
+			<td class="aui-td-doc" style="padding-left: %dpx;">
+				<a href="%s" class="aui-doc-link">
+					<span class="aui-doc-glyph">›</span>
+					<span class="aui-doc-name">%s</span>
+				</a>
+			</td>
+			<td class="aui-td-state">
+				<span class="aui-pill aui-pill-%s">
+					<span class="aui-pill-dot"></span>
+					<span>%s</span>
+				</span>
+			</td>
+			<td class="aui-td-size aui-mono">%s</td>
+			<td class="aui-td-time aui-mono">%s</td>
+			<td class="aui-td-action">
+				<a href="%s" class="aui-action-btn">Open →</a>
+			</td>
+		</tr>`,
+				escapedID,
+				escapedName,
+				html.EscapeString(state),
+				escapedParent,
+				ch.Depth,
+				padLeft,
+				urlPath,
+				escapedName,
+				html.EscapeString(state),
+				html.EscapeString(state),
+				html.EscapeString(sizeStr),
+				html.EscapeString(timeStr),
+				urlPath,
+			))
+		}
+	}
 }

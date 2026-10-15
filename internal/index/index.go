@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,12 +123,27 @@ func (s *Store) save() error {
 	return os.Rename(tempPath, s.path)
 }
 
-// Get returns an entry by ID.
+// Get returns an entry by ID or Key.
 func (s *Store) Get(id string) (Entry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	e, ok := s.entries[id]
-	return e, ok
+	if e, ok := s.entries[id]; ok {
+		return e, true
+	}
+	trimmed := strings.TrimSuffix(id, ".html")
+	if e, ok := s.entries[trimmed]; ok {
+		return e, true
+	}
+	withHTML := id + ".html"
+	if e, ok := s.entries[withHTML]; ok {
+		return e, true
+	}
+	for _, e := range s.entries {
+		if e.Key == id || e.Key == withHTML || e.ID == id || e.ID == trimmed {
+			return e, true
+		}
+	}
+	return Entry{}, false
 }
 
 // List returns all entries.
@@ -164,13 +180,31 @@ func (s *Store) Update(id string, mutate func(*Entry)) error {
 		return err
 	}
 
-	e, ok := s.entries[id]
+	actualID := id
+	e, ok := s.entries[actualID]
 	if !ok {
-		e = Entry{ID: id}
+		trimmed := strings.TrimSuffix(id, ".html")
+		if existing, found := s.entries[trimmed]; found {
+			e = existing
+			ok = true
+			actualID = trimmed
+		} else {
+			for k, existing := range s.entries {
+				if existing.Key == id || existing.ID == id || existing.ID == trimmed {
+					e = existing
+					ok = true
+					actualID = k
+					break
+				}
+			}
+		}
+		if !ok {
+			e = Entry{ID: id}
+		}
 	}
 	
 	mutate(&e)
-	s.entries[id] = e
+	s.entries[actualID] = e
 
 	return s.save()
 }
@@ -194,6 +228,20 @@ func (s *Store) Delete(id string) error {
 		return err
 	}
 
-	delete(s.entries, id)
+	if _, ok := s.entries[id]; ok {
+		delete(s.entries, id)
+	} else {
+		trimmed := strings.TrimSuffix(id, ".html")
+		if _, ok := s.entries[trimmed]; ok {
+			delete(s.entries, trimmed)
+		} else {
+			for k, e := range s.entries {
+				if e.Key == id || e.ID == id || e.ID == trimmed {
+					delete(s.entries, k)
+					break
+				}
+			}
+		}
+	}
 	return s.save()
 }

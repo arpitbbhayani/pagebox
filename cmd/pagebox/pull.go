@@ -62,7 +62,7 @@ func pullOne(id string, force bool, cfg pbconfig.Config, store storage.Storage, 
 			ui.Command(fmt.Sprintf("pagebox pull %s --force", id), nil)
 			os.Exit(1)
 		}
-		backupFile(cfg.DocsDir, id)
+		backupFile(cfg.DocsDir, entry.Key)
 	}
 
 	sp := ui.NewSpinner(fmt.Sprintf("Downloading %s", id))
@@ -77,7 +77,7 @@ func pullOne(id string, force bool, cfg pbconfig.Config, store storage.Storage, 
 	}
 	defer body.Close()
 
-	dest := filepath.Join(cfg.DocsDir, entry.Key)
+	dest := filepath.Join(cfg.DocsDir, filepath.FromSlash(entry.Key))
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		sp.Stop(false)
 		ui.PrintErr("failed to create directory", err.Error(), nil)
@@ -128,14 +128,14 @@ func pullStale(cfg pbconfig.Config, store storage.Storage, idx *index.Store) {
 	}
 }
 
-func backupFile(docsDir, id string) {
+func backupFile(docsDir, key string) {
 	home, _ := os.UserHomeDir()
 	ts := time.Now().Format("20060102-150405")
 	backupDir := filepath.Join(home, ".pagebox", "backups", ts)
-	os.MkdirAll(backupDir, 0755)
 
-	srcPath := filepath.Join(docsDir, id+".html")
-	destPath := filepath.Join(backupDir, id+".html")
+	srcPath := filepath.Join(docsDir, filepath.FromSlash(key))
+	destPath := filepath.Join(backupDir, filepath.FromSlash(key))
+	os.MkdirAll(filepath.Dir(destPath), 0755)
 
 	src, err := os.Open(srcPath)
 	if err != nil {

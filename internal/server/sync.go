@@ -108,8 +108,8 @@ func (s *SyncLoop) setupWatcher(dir string) error {
 }
 
 func (s *SyncLoop) handleFSEvent(event fsnotify.Event) {
-	if !strings.HasSuffix(event.Name, ".html") {
-		// Only care about HTML files
+	if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+		_ = s.watcher.Add(event.Name)
 		return
 	}
 
@@ -117,11 +117,18 @@ func (s *SyncLoop) handleFSEvent(event fsnotify.Event) {
 	if err != nil {
 		return
 	}
+	slashRel := filepath.ToSlash(rel)
+	if strings.HasPrefix(slashRel, ".") || strings.Contains(slashRel, "/.") {
+		return
+	}
 	
-	id := strings.TrimSuffix(rel, ".html")
+	id := slashRel
+	if strings.HasSuffix(slashRel, ".html") {
+		id = strings.TrimSuffix(slashRel, ".html")
+	}
 
 	if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
-		s.markDirtyAndSchedule(id, rel)
+		s.markDirtyAndSchedule(id, slashRel)
 	}
 }
 
@@ -175,7 +182,7 @@ func (s *SyncLoop) push(ctx context.Context, id string) {
 		return
 	}
 
-	localPath := filepath.Join(s.cfg.DocsDir, entry.Key)
+	localPath := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(entry.Key))
 	f, err := os.Open(localPath)
 	if err != nil {
 		log.Printf("failed to open %s for push: %v", id, err)
@@ -226,10 +233,11 @@ func (s *SyncLoop) pollRemote(ctx context.Context) {
 
 	remoteMap := make(map[string]storage.Object)
 	for _, obj := range objects {
-		if !strings.HasSuffix(obj.Key, ".html") {
-			continue
+		key := strings.TrimPrefix(obj.Key, "/")
+		id := key
+		if strings.HasSuffix(key, ".html") {
+			id = strings.TrimSuffix(key, ".html")
 		}
-		id := strings.TrimSuffix(obj.Key, ".html")
 		remoteMap[id] = obj
 	}
 
@@ -273,7 +281,7 @@ func (s *SyncLoop) pollRemote(ctx context.Context) {
 				entry.LastPolledAt = time.Now()
 				
 				// Ensure placeholder file exists locally
-				localPath := filepath.Join(s.cfg.DocsDir, rem.Key)
+				localPath := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(rem.Key))
 				os.MkdirAll(filepath.Dir(localPath), 0755)
 				if _, err := os.Stat(localPath); os.IsNotExist(err) {
 					os.WriteFile(localPath, []byte{}, 0644)

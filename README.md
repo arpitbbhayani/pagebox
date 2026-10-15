@@ -163,6 +163,7 @@ Validates:
 | Command | Description |
 | :--- | :--- |
 | `pagebox init` | Interactive configuration setup wizard |
+| `pagebox add [paths...]` | Add untracked and modified files from configured docs folder to index |
 | `pagebox serve` | Run HTTP server and sync loop in foreground |
 | `pagebox list` | Display paginated list of all tracked documents and states |
 | `pagebox status` | Show dirty, diverged, and stale document summary |
