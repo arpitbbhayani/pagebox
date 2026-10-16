@@ -39,6 +39,7 @@ func setupTestServer(t *testing.T) (*Server, string, func()) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
+	t.Setenv("HOME", tmpDir)
 
 	// Create test html file
 	doc1Path := filepath.Join(tmpDir, "sample-doc.html")

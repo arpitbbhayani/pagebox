@@ -1446,7 +1446,7 @@ html, body {
 	function renderMarkdown() {
 		var scriptEl = document.getElementById('raw-markdown');
 		var raw = scriptEl ? scriptEl.textContent : '';
-		raw = raw.replace(/<\\\/script/gi, '</script>');
+		raw = raw.replace(/<\\\/script/gi, '<' + '/script>');
 
 		var bodyEl = document.getElementById('prose-body');
 		if (typeof marked !== 'undefined') {
