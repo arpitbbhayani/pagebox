@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
 	"github.com/arpitbhayani/pagebox/internal/index"
+	"github.com/arpitbhayani/pagebox/internal/storage"
 )
 
 func captureStdout(f func()) string {
@@ -225,5 +227,221 @@ func TestPageboxAddMarkdownFiles(t *testing.T) {
 	e2, ok2 := idx.Get("rfcs/rfc-001")
 	if !ok2 || e2.Key != "rfcs/rfc-001.markdown" {
 		t.Errorf("expected rfcs/rfc-001 in index with key 'rfcs/rfc-001.markdown', got ok=%v, key=%s", ok2, e2.Key)
+	}
+}
+
+func TestPageboxAddExternalFileSymlink(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	docsDir := filepath.Join(tmpHome, "pagebox")
+	_ = os.MkdirAll(docsDir, 0755)
+
+	cfg := pbconfig.DefaultConfig()
+	cfg.DocsDir = docsDir
+	_ = pbconfig.Save(cfg)
+
+	// Create an external document outside docsDir
+	externalDir := t.TempDir()
+	externalFile := filepath.Join(externalDir, "verification-bottleneck.md")
+	_ = os.WriteFile(externalFile, []byte("# Verification Bottleneck"), 0644)
+
+	out := captureStdout(func() {
+		addCmd.SetArgs([]string{externalFile})
+		_ = addCmd.Execute()
+	})
+
+	if !strings.Contains(out, "verification-bottleneck.md") {
+		t.Errorf("expected out to mention verification-bottleneck.md, got:\n%s", out)
+	}
+
+	// Verify symlink was created in docsDir
+	expectedSymlink := filepath.Join(docsDir, "verification-bottleneck.md")
+	linfo, err := os.Lstat(expectedSymlink)
+	if err != nil {
+		t.Fatalf("expected symlink at %s, but got error: %v", expectedSymlink, err)
+	}
+	if linfo.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("expected %s to be a symlink", expectedSymlink)
+	}
+	target, err := os.Readlink(expectedSymlink)
+	if err != nil || target != externalFile {
+		t.Errorf("expected symlink target %s, got %s (err: %v)", externalFile, target, err)
+	}
+
+	// Verify entry in index
+	idx, err := index.NewStore()
+	if err != nil {
+		t.Fatalf("failed to open index: %v", err)
+	}
+	entry, ok := idx.Get("verification-bottleneck")
+	if !ok {
+		t.Fatalf("expected verification-bottleneck in index")
+	}
+	if entry.Key != "verification-bottleneck.md" {
+		t.Errorf("expected key 'verification-bottleneck.md', got '%s'", entry.Key)
+	}
+	if entry.State != index.StateNew {
+		t.Errorf("expected StateNew when S3 not configured, got %s", entry.State)
+	}
+}
+
+func TestPageboxAddExternalFileWithTilde(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	docsDir := filepath.Join(tmpHome, "pagebox")
+	_ = os.MkdirAll(docsDir, 0755)
+
+	cfg := pbconfig.DefaultConfig()
+	cfg.DocsDir = docsDir
+	_ = pbconfig.Save(cfg)
+
+	// Create a file in ~/docs/test.md
+	homeDocs := filepath.Join(tmpHome, "docs")
+	_ = os.MkdirAll(homeDocs, 0755)
+	_ = os.WriteFile(filepath.Join(homeDocs, "test.md"), []byte("# Test"), 0644)
+
+	out := captureStdout(func() {
+		addCmd.SetArgs([]string{"~/docs/test.md"})
+		_ = addCmd.Execute()
+	})
+
+	if !strings.Contains(out, "test.md") {
+		t.Errorf("expected out to mention test.md, got:\n%s", out)
+	}
+
+	symlink := filepath.Join(docsDir, "test.md")
+	linfo, err := os.Lstat(symlink)
+	if err != nil || linfo.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected symlink at %s", symlink)
+	}
+}
+
+func TestPageboxAddExternalDirectorySymlink(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	docsDir := filepath.Join(tmpHome, "pagebox")
+	_ = os.MkdirAll(docsDir, 0755)
+
+	cfg := pbconfig.DefaultConfig()
+	cfg.DocsDir = docsDir
+	_ = pbconfig.Save(cfg)
+
+	// Create an external directory with files outside docsDir
+	externalDir := t.TempDir()
+	projectDocs := filepath.Join(externalDir, "internals")
+	_ = os.MkdirAll(projectDocs, 0755)
+	_ = os.WriteFile(filepath.Join(projectDocs, "bottleneck.md"), []byte("# Bottleneck"), 0644)
+	_ = os.WriteFile(filepath.Join(projectDocs, "overview.html"), []byte("<h1>Overview</h1>"), 0644)
+
+	out := captureStdout(func() {
+		addCmd.SetArgs([]string{projectDocs})
+		_ = addCmd.Execute()
+	})
+
+	if !strings.Contains(out, "add 'internals/bottleneck.md'") {
+		t.Errorf("expected out to add 'internals/bottleneck.md', got:\n%s", out)
+	}
+	if !strings.Contains(out, "add 'internals/overview.html'") {
+		t.Errorf("expected out to add 'internals/overview.html', got:\n%s", out)
+	}
+
+	// Verify directory symlink in docsDir
+	symlink := filepath.Join(docsDir, "internals")
+	linfo, err := os.Lstat(symlink)
+	if err != nil || linfo.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected symlink at %s", symlink)
+	}
+
+	idx, err := index.NewStore()
+	if err != nil {
+		t.Fatalf("failed to open index: %v", err)
+	}
+	if _, ok := idx.Get("internals/bottleneck"); !ok {
+		t.Errorf("expected internals/bottleneck in index")
+	}
+	if _, ok := idx.Get("internals/overview"); !ok {
+		t.Errorf("expected internals/overview in index")
+	}
+}
+
+type mockStorage struct {
+	putCalled bool
+	putKey    string
+}
+
+func (m *mockStorage) Put(ctx context.Context, key string, body io.Reader, size int64, etag string) (string, error) {
+	m.putCalled = true
+	m.putKey = key
+	return "mock-etag-123", nil
+}
+
+func (m *mockStorage) Get(ctx context.Context, key string, etag string) (io.ReadCloser, string, error) {
+	return nil, "", storage.ErrNotFound
+}
+
+func (m *mockStorage) Delete(ctx context.Context, key string) error {
+	return nil
+}
+
+func (m *mockStorage) List(ctx context.Context) ([]storage.Object, error) {
+	return nil, nil
+}
+
+func TestPageboxAddUploadsToS3IfConfigured(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	docsDir := filepath.Join(tmpHome, "pagebox")
+	_ = os.MkdirAll(docsDir, 0755)
+
+	cfg := pbconfig.DefaultConfig()
+	cfg.DocsDir = docsDir
+	cfg.Backend = "s3"
+	cfg.Bucket = "test-bucket"
+	_ = pbconfig.Save(cfg)
+
+	// Mock storage
+	mock := &mockStorage{}
+	oldStorageNew := storageNew
+	storageNew = func(c pbconfig.Config) (storage.Storage, error) {
+		return mock, nil
+	}
+	defer func() { storageNew = oldStorageNew }()
+
+	externalDir := t.TempDir()
+	externalFile := filepath.Join(externalDir, "architecture.md")
+	_ = os.WriteFile(externalFile, []byte("# Architecture"), 0644)
+
+	out := captureStdout(func() {
+		addCmd.SetArgs([]string{externalFile})
+		_ = addCmd.Execute()
+	})
+
+	if !mock.putCalled {
+		t.Errorf("expected S3 Put to be called when S3 is configured, but was not")
+	}
+	if mock.putKey != "architecture.md" {
+		t.Errorf("expected putKey 'architecture.md', got '%s'", mock.putKey)
+	}
+	if !strings.Contains(out, "pushed document") {
+		t.Errorf("expected output to contain 'pushed document', got:\n%s", out)
+	}
+
+	idx, err := index.NewStore()
+	if err != nil {
+		t.Fatalf("failed to open index: %v", err)
+	}
+	entry, ok := idx.Get("architecture")
+	if !ok {
+		t.Fatalf("expected architecture in index")
+	}
+	if entry.State != index.StateCached {
+		t.Errorf("expected entry state StateCached after upload, got %s", entry.State)
+	}
+	if entry.BaseETag != "mock-etag-123" {
+		t.Errorf("expected BaseETag 'mock-etag-123', got '%s'", entry.BaseETag)
 	}
 }

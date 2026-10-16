@@ -43,6 +43,7 @@ type Store struct {
 	path    string
 	lock    *flock.Flock
 	entries map[string]Entry
+	lastMod time.Time
 }
 
 // NewStore initializes a new index store.
@@ -80,6 +81,10 @@ func (s *Store) load() error {
 	}
 	defer f.Close()
 
+	if stat, err := f.Stat(); err == nil {
+		s.lastMod = stat.ModTime()
+	}
+
 	var list []Entry
 	if err := json.NewDecoder(f).Decode(&list); err != nil {
 		return fmt.Errorf("corrupt index: %w", err)
@@ -90,6 +95,20 @@ func (s *Store) load() error {
 		s.entries[e.ID] = e
 	}
 	return nil
+}
+
+func (s *Store) reloadIfModified() {
+	stat, err := os.Stat(s.path)
+	if err != nil {
+		return
+	}
+	if stat.ModTime().After(s.lastMod) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if stat.ModTime().After(s.lastMod) {
+			_ = s.load()
+		}
+	}
 }
 
 // save writes the index to disk atomically. Requires the flock.
@@ -140,6 +159,7 @@ func TrimDocExt(s string) string {
 
 // Get returns an entry by ID or Key.
 func (s *Store) Get(id string) (Entry, bool) {
+	s.reloadIfModified()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if e, ok := s.entries[id]; ok {
@@ -164,6 +184,7 @@ func (s *Store) Get(id string) (Entry, bool) {
 
 // List returns all entries.
 func (s *Store) List() []Entry {
+	s.reloadIfModified()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	list := make([]Entry, 0, len(s.entries))

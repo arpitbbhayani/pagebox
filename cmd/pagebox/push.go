@@ -16,6 +16,8 @@ import (
 	"github.com/arpitbhayani/pagebox/internal/ui"
 )
 
+var storageNew = storage.New
+
 var pushCmd = &cobra.Command{
 	Use:   "push [id]",
 	Short: "Push local changes",
@@ -26,7 +28,7 @@ var pushCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		store, err := storage.New(cfg)
+		store, err := storageNew(cfg)
 		if err != nil {
 			ui.PrintErr("failed to init storage", err.Error(), nil)
 			os.Exit(1)
@@ -58,18 +60,39 @@ func pushOne(id string, cfg pbconfig.Config, store storage.Storage, idx *index.S
 		return
 	}
 
+	err := pushDocument(id, cfg, store, idx)
+	if err != nil {
+		if errors.Is(err, storage.ErrPreconditionFailed) {
+			os.Exit(3)
+		}
+		os.Exit(2)
+	}
+}
+
+func pushDocument(id string, cfg pbconfig.Config, store storage.Storage, idx *index.Store) error {
+	entry, ok := idx.Get(id)
+	if !ok {
+		ui.PrintErr("document not found in index", id, nil)
+		return fmt.Errorf("document not found in index: %s", id)
+	}
+
+	if entry.State != index.StateDirty && entry.State != index.StateNew {
+		ui.PrintInfo("nothing to push", fmt.Sprintf("state is %s", entry.State), nil)
+		return nil
+	}
+
 	srcPath := filepath.Join(cfg.DocsDir, filepath.FromSlash(entry.Key))
 	f, err := os.Open(srcPath)
 	if err != nil {
 		ui.PrintErr("could not open local file", err.Error(), nil)
-		os.Exit(1)
+		return err
 	}
 	defer f.Close()
 
 	stat, err := f.Stat()
 	if err != nil {
 		ui.PrintErr("could not stat local file", err.Error(), nil)
-		os.Exit(1)
+		return err
 	}
 
 	sp := ui.NewSpinner(fmt.Sprintf("Pushing %s", id))
@@ -91,10 +114,10 @@ func pushOne(id string, cfg pbconfig.Config, store storage.Storage, idx *index.S
 			})
 			ui.PrintErr("remote changed since your last sync", "", nil)
 			ui.Command(fmt.Sprintf("pagebox pull %s", id), nil)
-			os.Exit(3)
+			return err
 		}
 		ui.PrintErr("push failed", err.Error(), nil)
-		os.Exit(2)
+		return err
 	}
 
 	idx.Update(id, func(e *index.Entry) {
@@ -106,6 +129,7 @@ func pushOne(id string, cfg pbconfig.Config, store storage.Storage, idx *index.S
 
 	sp.Stop(true)
 	ui.PrintOk("pushed document", id, nil)
+	return nil
 }
 
 func pushDirty(cfg pbconfig.Config, store storage.Storage, idx *index.Store) {

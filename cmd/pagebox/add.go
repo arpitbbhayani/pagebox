@@ -98,8 +98,8 @@ var addCmd = &cobra.Command{
 						e.Size = size
 						e.LocalSHA256 = hashHex
 					})
-					// Only output if hash changed or state was cached (i.e. real change)
-					if entry.LocalSHA256 != hashHex || entry.State == index.StateCached {
+					// Only output if hash changed, state was cached (i.e. real change), or explicitly passed via args
+					if entry.LocalSHA256 != hashHex || entry.State == index.StateCached || len(args) > 0 {
 						added = append(added, rel)
 					}
 				}
@@ -111,8 +111,23 @@ var addCmd = &cobra.Command{
 			for _, file := range added {
 				fmt.Printf("add '%s'\n", file)
 			}
-			ui.Hint("push changes to remote storage:", nil)
-			ui.Command("pagebox push", nil)
+
+			if cfg.IsS3Configured() {
+				store, err := storageNew(cfg)
+				if err != nil {
+					ui.PrintErr("failed to init storage for s3 upload", err.Error(), nil)
+					os.Exit(1)
+				}
+				for _, file := range added {
+					id := index.TrimDocExt(file)
+					if err := pushDocument(id, cfg, store, idx); err != nil {
+						os.Exit(1)
+					}
+				}
+			} else {
+				ui.Hint("push changes to remote storage:", nil)
+				ui.Command("pagebox push", nil)
+			}
 		} else {
 			fmt.Println("nothing to add")
 		}
@@ -121,6 +136,53 @@ var addCmd = &cobra.Command{
 
 func init() {
 	addCmd.Flags().BoolP("all", "A", false, "add all files in configured docs directory")
+}
+
+func expandHome(path string) string {
+	if path == "~" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return home
+		}
+	} else if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+func symlinkToDocsDir(docsDir, srcPath string) (string, error) {
+	if err := os.MkdirAll(docsDir, 0755); err != nil {
+		return "", err
+	}
+
+	name := filepath.Base(srcPath)
+	destPath := filepath.Join(docsDir, name)
+
+	createLink := true
+	if linfo, err := os.Lstat(destPath); err == nil {
+		if linfo.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(destPath)
+			if err == nil && target == srcPath {
+				createLink = false
+			} else {
+				_ = os.Remove(destPath)
+			}
+		} else {
+			_ = os.RemoveAll(destPath)
+		}
+	}
+
+	if createLink {
+		if err := os.Symlink(srcPath, destPath); err != nil {
+			return "", err
+		}
+		ui.PrintOk("created symlink", fmt.Sprintf("'%s' -> '%s'", name, srcPath), nil)
+	}
+
+	return destPath, nil
 }
 
 func resolveFilesToInspect(docsDir, cwd string, args []string, allFlag bool) ([]string, error) {
@@ -132,29 +194,59 @@ func resolveFilesToInspect(docsDir, cwd string, args []string, allFlag bool) ([]
 	var results []string
 	seen := make(map[string]bool)
 
-	for _, arg := range args {
-		// 1. Try directly inside docsDir
-		target := filepath.Join(docsDir, arg)
-		if _, err := os.Stat(target); err != nil {
-			// 2. Try if arg is absolute and inside docsDir
-			if filepath.IsAbs(arg) {
-				rel, err := filepath.Rel(docsDir, arg)
-				if err == nil && !strings.HasPrefix(rel, "..") {
-					target = arg
+	for _, rawArg := range args {
+		arg := expandHome(rawArg)
+		var target string
+
+		// 1. If arg is absolute
+		if filepath.IsAbs(arg) {
+			cleanArg := filepath.Clean(arg)
+			rel, err := filepath.Rel(docsDir, cleanArg)
+			if err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
+				// Absolute path inside docsDir
+				target = cleanArg
+			} else if _, err := os.Stat(cleanArg); err == nil {
+				// Absolute path outside docsDir, exists!
+				dest, err := symlinkToDocsDir(docsDir, cleanArg)
+				if err != nil {
+					ui.PrintErr("failed to create symlink", err.Error(), nil)
+					continue
 				}
-			} else if cwd != "" {
-				// 3. Try relative to cwd if cwd is within docsDir
-				absFromCwd := filepath.Join(cwd, arg)
-				rel, err := filepath.Rel(docsDir, absFromCwd)
-				if err == nil && !strings.HasPrefix(rel, "..") {
-					target = absFromCwd
+				target = dest
+			}
+		} else {
+			// 2. Relative path: first check directly inside docsDir
+			directTarget := filepath.Join(docsDir, arg)
+			if _, err := os.Stat(directTarget); err == nil {
+				target = directTarget
+			} else {
+				// 3. Check relative to cwd
+				absFromCwd := filepath.Clean(filepath.Join(cwd, arg))
+				if _, err := os.Stat(absFromCwd); err == nil {
+					rel, err := filepath.Rel(docsDir, absFromCwd)
+					if err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
+						target = absFromCwd
+					} else {
+						// Outside docsDir, exists!
+						dest, err := symlinkToDocsDir(docsDir, absFromCwd)
+						if err != nil {
+							ui.PrintErr("failed to create symlink", err.Error(), nil)
+							continue
+						}
+						target = dest
+					}
 				}
 			}
 		}
 
+		if target == "" {
+			ui.PrintWarn("path not found in configured docs dir", fmt.Sprintf("'%s' (docs dir: %s)", rawArg, docsDir), nil)
+			continue
+		}
+
 		info, err := os.Stat(target)
 		if err != nil {
-			ui.PrintWarn("path not found in configured docs dir", fmt.Sprintf("'%s' (docs dir: %s)", arg, docsDir), nil)
+			ui.PrintWarn("path not found in configured docs dir", fmt.Sprintf("'%s' (docs dir: %s)", rawArg, docsDir), nil)
 			continue
 		}
 
@@ -190,30 +282,55 @@ func collectAllDocFiles(docsDir string) ([]string, error) {
 
 func collectDirDocFiles(docsDir, targetDir string) ([]string, error) {
 	var files []string
-	err := filepath.Walk(targetDir, func(path string, info os.FileInfo, err error) error {
+	visited := make(map[string]bool)
+
+	var walk func(currentDir string) error
+	walk = func(currentDir string) error {
+		realCurrent, err := filepath.EvalSymlinks(currentDir)
+		if err != nil {
+			return nil
+		}
+		if visited[realCurrent] {
+			return nil
+		}
+		visited[realCurrent] = true
+
+		entries, err := os.ReadDir(currentDir)
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
-			if strings.HasPrefix(info.Name(), ".") && path != targetDir {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if strings.HasPrefix(info.Name(), ".") {
-			return nil
-		}
 
-		rel, err := filepath.Rel(docsDir, path)
-		if err != nil {
-			return nil
-		}
-		slashRel := filepath.ToSlash(rel)
-		if !isIgnored(slashRel) {
-			files = append(files, slashRel)
+		for _, entry := range entries {
+			name := entry.Name()
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+
+			fullPath := filepath.Join(currentDir, name)
+			info, err := os.Stat(fullPath)
+			if err != nil {
+				continue
+			}
+
+			if info.IsDir() {
+				if err := walk(fullPath); err != nil {
+					return err
+				}
+			} else {
+				rel, err := filepath.Rel(docsDir, fullPath)
+				if err != nil {
+					continue
+				}
+				slashRel := filepath.ToSlash(rel)
+				if !isIgnored(slashRel) {
+					files = append(files, slashRel)
+				}
+			}
 		}
 		return nil
-	})
+	}
+
+	err := walk(targetDir)
 	return files, err
 }
 

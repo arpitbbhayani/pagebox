@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -33,6 +34,14 @@ func DefaultConfig() Config {
 		PushDebounce: "10s",
 		AWSProfile:   "default",
 	}
+}
+
+func (c Config) IsS3Configured() bool {
+	backend := strings.ToLower(strings.TrimSpace(c.Backend))
+	if backend == "" {
+		backend = "s3"
+	}
+	return backend == "s3" && strings.TrimSpace(c.Bucket) != ""
 }
 
 func Path() (string, error) {
