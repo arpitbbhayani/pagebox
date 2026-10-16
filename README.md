@@ -279,7 +279,9 @@ Once DNS propagates (usually within seconds to a few minutes):
 
 ---
 
-## Development
+## Development & Releases
+
+### Local Development
 
 ```bash
 # Run unit and integration tests
@@ -290,10 +292,29 @@ make build
 
 # Cross-compile release binaries across all architectures into dist/
 make dist
-
-# Prepare and tag a release
-make publish 0.2.0
 ```
+
+### Release Process & CI/CD Automation
+
+Pagebox includes a GitHub Actions workflow (`.github/workflows/release.yml`) that automatically builds and publishes release binaries whenever a release tag is pushed.
+
+1. **Prepare and tag a release**:
+   ```bash
+   make publish 0.1.0
+   ```
+   This bumps `VERSION`, builds binaries locally, creates git commits, and tags `v0.1.0`.
+
+2. **Push to GitHub**:
+   ```bash
+   git push origin master --tags
+   ```
+   Pushing the `v*` tag triggers the GitHub Actions workflow, which runs tests, builds static binaries across all platforms, computes SHA-256 `checksums.txt`, and creates the GitHub Release with automatic release notes.
+
+3. **(Optional) Manual CLI Release via `gh`**:
+   ```bash
+   make dist
+   gh release create v0.1.0 dist/* --title "v0.1.0" --generate-notes
+   ```
 
 ---
 
