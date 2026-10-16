@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -43,7 +44,7 @@ var pullCmd = &cobra.Command{
 		if len(args) > 0 {
 			pullOne(args[0], force, cfg, store, idx)
 		} else {
-			pullStale(cfg, store, idx)
+			pullAll(force, cfg, store, idx)
 		}
 	},
 }
@@ -112,19 +113,73 @@ func pullOne(id string, force bool, cfg pbconfig.Config, store storage.Storage, 
 	ui.PrintOk("pulled document", id, nil)
 }
 
-func pullStale(cfg pbconfig.Config, store storage.Storage, idx *index.Store) {
-	entries := idx.List()
-	staleCount := 0
-	
-	for _, e := range entries {
-		if e.State == index.StateStale {
-			staleCount++
-			pullOne(e.ID, false, cfg, store, idx)
+func pullAll(force bool, cfg pbconfig.Config, store storage.Storage, idx *index.Store) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	sp := ui.NewSpinner("Checking remote storage")
+	objects, err := store.List(ctx)
+	if err != nil {
+		sp.Stop(false)
+		ui.PrintErr("failed to list remote objects", err.Error(), nil)
+		os.Exit(1)
+	}
+	sp.Stop(true)
+
+	remoteMap := make(map[string]storage.Object)
+	for _, obj := range objects {
+		key := strings.TrimPrefix(obj.Key, "/")
+		id := index.TrimDocExt(key)
+		remoteMap[id] = obj
+	}
+
+	pulledCount := 0
+	skippedCount := 0
+
+	for _, e := range idx.List() {
+		rem, exists := remoteMap[e.ID]
+		if !exists {
+			continue
+		}
+		delete(remoteMap, e.ID)
+
+		if e.RemoteETag != rem.ETag || e.State == index.StateStale || e.State == index.StatePlaceholder {
+			idx.Update(e.ID, func(entry *index.Entry) {
+				entry.RemoteETag = rem.ETag
+				if entry.State == index.StateCached || entry.State == index.StatePlaceholder {
+					entry.State = index.StateStale
+				} else if entry.State == index.StateDirty {
+					entry.State = index.StateDiverged
+				}
+			})
+
+			if e.State == index.StateDirty || e.State == index.StateDiverged {
+				if !force {
+					ui.PrintWarn("skipped diverged document (use --force to overwrite)", e.ID, nil)
+					skippedCount++
+					continue
+				}
+			}
+
+			pullOne(e.ID, force, cfg, store, idx)
+			pulledCount++
 		}
 	}
 
-	if staleCount == 0 {
-		ui.PrintInfo("no stale documents to pull", "", nil)
+	for id, rem := range remoteMap {
+		idx.Update(id, func(entry *index.Entry) {
+			entry.ID = id
+			entry.Key = rem.Key
+			entry.State = index.StateStale
+			entry.RemoteETag = rem.ETag
+			entry.Size = 0
+		})
+		pullOne(id, force, cfg, store, idx)
+		pulledCount++
+	}
+
+	if pulledCount == 0 && skippedCount == 0 {
+		ui.PrintOk("everything up to date", "", nil)
 	}
 }
 

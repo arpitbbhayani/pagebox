@@ -54,26 +54,13 @@ func (s *SyncLoop) Start(ctx context.Context) error {
 		return err
 	}
 
-	pollInterval, err := time.ParseDuration(s.cfg.PollInterval)
-	if err != nil {
-		pollInterval = 5 * time.Minute
-	}
-	
-	pollTicker := time.NewTicker(pollInterval)
-	defer pollTicker.Stop()
-
 	debounceTicker := time.NewTicker(1 * time.Second)
 	defer debounceTicker.Stop()
-
-	// Initial poll
-	go s.pollRemote(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-pollTicker.C:
-			go s.pollRemote(ctx)
 		case event, ok := <-s.watcher.Events:
 			if !ok {
 				return nil

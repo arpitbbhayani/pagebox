@@ -12,7 +12,7 @@ Pagebox bridges the gap between cloud storage and local workflows:
 
 - **Local-First & Offline-Ready**: Every document lives on your local filesystem as plain HTML or Markdown. Read and navigate documents with zero latency even while completely offline.
 - **Client-Side Markdown Rendering**: Seamlessly renders `.md` and `.markdown` documents to HTML purely in the browser with zero server-side parser overhead. Strictly preserves the Array UI editorial design system (`Assistant` body/headings, `Lora` italic quotes, `IBM Plex Mono` code/tables, code block copy buttons, and dark/light mode synchronization).
-- **Continuous Background S3 Sync**: A lightweight daemon monitors your local directory with `fsnotify` and polls S3. Local edits are automatically debounced and pushed to the cloud using ETag-based optimistic locking.
+- **Debounced Push & Explicit Pull**: A lightweight daemon monitors your local directory with `fsnotify` and automatically pushes debounced local edits to S3 using ETag-based optimistic locking. Remote updates are pulled explicitly via `pagebox pull`.
 - **Lazy Placeholder Fetching**: Pagebox indexes remote files without forcing you to download gigabytes of documents upfront. Uncached documents exist as lightweight placeholders and stream down on first browser access.
 - **Editorial Systems Design (Array UI)**: Built on the Array UI design system—featuring mathematical 1px hairline borders, dense `Assistant` and `IBM Plex Mono` typography, tactile dark/light mode toggle, instant search with `/` shortcut, and iframe document preview.
 - **Single Static Binary**: Written in Go with zero runtime dependencies. Runs as a foreground server or as an OS-managed user daemon (`systemd` on Linux/WSL, `launchd` on macOS).
@@ -82,7 +82,6 @@ docs_dir = "/home/user/pagebox"
 host = "localhost"
 port = 8732
 bind = "0.0.0.0"
-poll_interval = "5m"
 push_debounce = "10s"
 ```
 

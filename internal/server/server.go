@@ -229,7 +229,7 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	<footer class="aui-footer">
 		<div class="aui-footer-inner">
 			<span>/pagebox · local-first document sync</span>
-			<span>poll interval %s</span>
+			<span>explicit pull · push on change</span>
 		</div>
 	</footer>
 </div>
@@ -463,7 +463,6 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		renderOptionalFilterTab(placeholderCount, "placeholder", "Remote"),
 		rows.String(),
 		emptyDisplay(len(entries)),
-		html.EscapeString(s.cfg.PollInterval),
 	)
 
 	w.Write([]byte(htmlContent))
