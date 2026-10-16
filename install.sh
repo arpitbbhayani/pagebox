@@ -337,16 +337,10 @@ if [ "$PATH_ALREADY_CONFIGURED" = "0" ]; then
   fi
 fi
 
-# 10. Next Steps / WSL Hint
+# 10. Next Steps
 echo
 printf "Get started with %b:\n\n" "${BOLD}pagebox${RESET}"
 printf "  ${AMBER}pagebox init${RESET}            # configure docs folder & S3 storage\n"
 printf "  ${AMBER}pagebox serve${RESET}           # run foreground server & sync loop\n"
 printf "  ${AMBER}pagebox daemon install${RESET}  # run background sync daemon as OS service\n"
-
-if grep -qi "microsoft\|wsl" /proc/version 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]; then
-  printf "\n${AMBER}WSL Environment Detected:${RESET}\n"
-  printf "  · Open documents on Windows at: ${BOLD}http://localhost:8730${RESET}\n"
-  printf "  · To use ${BOLD}http://pagebox.local:8730${RESET}, map '127.0.0.1 pagebox.local' in Windows hosts\n"
-fi
 echo

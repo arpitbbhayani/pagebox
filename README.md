@@ -79,8 +79,8 @@ prefix = ""
 region = "us-east-1"
 aws_profile = "default"
 docs_dir = "/home/user/pagebox"
-host = "pagebox.local"
-port = 8730
+host = "localhost"
+port = 8732
 bind = "0.0.0.0"
 poll_interval = "5m"
 push_debounce = "10s"
@@ -94,7 +94,7 @@ Start Pagebox in the foreground:
 pagebox serve
 ```
 
-Open your browser at [http://localhost:8730](http://localhost:8730) (or `http://pagebox.local:8730`).
+Open your browser at [http://localhost:8732](http://localhost:8732).
 
 ### 3. Install as a Background Service
 
@@ -104,15 +104,31 @@ Run Pagebox continuously in the background as an OS service:
 pagebox daemon install
 ```
 
-- **Linux / WSL**: Installs and enables a systemd user service (`~/.config/systemd/user/pagebox.service`).
+- **Linux / WSL**: Installs and starts a systemd user service (`~/.config/systemd/user/pagebox.service`).
 - **macOS**: Installs and loads a launchd agent (`~/Library/LaunchAgents/me.arpitbhayani.pagebox.plist`).
 
-Check service status and tail logs:
+#### Managing the Background Service (Linux / systemd)
+
+You can manage the background service directly using standard `systemctl` user commands:
 
 ```bash
-pagebox daemon status
-pagebox daemon logs
+# Check service status and active state
+systemctl --user status pagebox
+
+# Start the background service
+systemctl --user start pagebox
+
+# Stop the background service
+systemctl --user stop pagebox
+
+# Restart the background service (e.g. after updating config.toml)
+systemctl --user restart pagebox
+
+# Stream live service logs
+journalctl --user -u pagebox -f
 ```
+
+*(You can also use the built-in Pagebox shortcuts: `pagebox daemon status`, `pagebox daemon logs`, and `pagebox uninstall`)*
 
 ---
 
@@ -181,18 +197,86 @@ Validates:
 
 ---
 
-## WSL & Windows Setup
+## Serving S3 Documents Over Cloudflare on a Custom Domain
 
-Pagebox includes native detection for Windows Subsystem for Linux (WSL).
+When Pagebox synchronizes your documents to an Amazon S3 bucket (e.g. `s3://my-docs-bucket`), you can serve those documents publicly or internally to your team on a custom domain (such as `https://docs.yourdomain.com`) using Cloudflare's global edge network, automatic SSL/TLS, and caching.
 
-When running inside WSL:
-1. Open documents directly in your Windows browser at [http://localhost:8730](http://localhost:8730).
-2. To use `http://pagebox.local:8730`, add the loopback mapping to `C:\Windows\System32\drivers\etc\hosts`:
-   ```text
-   127.0.0.1 pagebox.local
+Follow these step-by-step instructions to set it up:
+
+### Step 1: Configure Your Amazon S3 Bucket
+
+1. **Enable Static Website Hosting**:
+   - In the **AWS S3 Console**, open your bucket.
+   - Navigate to the **Properties** tab and scroll down to **Static website hosting**.
+   - Click **Edit**, choose **Enable**, and set:
+     - **Hosting type**: *Host a static website*
+     - **Index document**: `index.html`
+     - **Error document**: `index.html` (or `404.html`)
+   - Click **Save changes**.
+   - Copy the generated **Bucket website endpoint** URL at the bottom of the card (e.g. `my-docs-bucket.s3-website.us-east-1.amazonaws.com` or `my-docs-bucket.s3-website.ap-south-1.amazonaws.com`).
+
+2. **Disable "Block All Public Access"**:
+   - Navigate to the **Permissions** tab.
+   - Under **Block public access (bucket settings)**, click **Edit**.
+   - Uncheck **Block *all* public access** and click **Save changes**.
+
+3. **Attach Public Read Bucket Policy**:
+   - Under **Permissions** → **Bucket policy**, click **Edit** and paste:
+     ```json
+     {
+       "Version": "2012-10-17",
+       "Statement": [
+         {
+           "Sid": "PublicReadGetObject",
+           "Effect": "Allow",
+           "Principal": "*",
+           "Action": "s3:GetObject",
+           "Resource": "arn:aws:s3:::<your-bucket-name>/*"
+         }
+       ]
+     }
+     ```
+   - Replace `<your-bucket-name>` with your actual S3 bucket name and click **Save changes**.
+
+---
+
+### Step 2: Configure Cloudflare DNS
+
+1. In your **Cloudflare Dashboard**, select your domain zone (e.g. `yourdomain.com`).
+2. Navigate to **DNS** → **Records** and click **Add record**:
+   - **Type**: `CNAME`
+   - **Name**: `docs` (or `@` if using the apex domain)
+   - **Target**: `<your-bucket-name>.s3-website.<region>.amazonaws.com`  
+     *(Important: Use the **S3 website endpoint** from Step 1, not the standard REST endpoint `s3.amazonaws.com`)*
+   - **Proxy status**: **Proxied** (Orange Cloud icon enabled)
+   - **TTL**: `Auto`
+3. Click **Save**.
+
+---
+
+### Step 3: Configure Cloudflare SSL/TLS & Edge Rules
+
+1. **Set SSL/TLS Encryption**:
+   - In Cloudflare, navigate to **SSL/TLS** → **Overview**.
+   - Set the encryption mode to **Full** (or **Flexible** if origin encryption is not required).
+   - Under **SSL/TLS** → **Edge Certificates**, toggle on **Always Use HTTPS** to automatically redirect `http://` requests to secure `https://`.
+
+2. **(Optional) Enable Edge Caching**:
+   - Navigate to **Caching** → **Cache Rules** and click **Create rule**.
+   - Set rule condition: `Hostname equals docs.yourdomain.com`.
+   - Under **Cache eligibility**, select **Eligible for cache**.
+   - Set edge cache TTL to your preference (e.g. 2 to 4 hours).
+
+---
+
+### Step 4: Verify Custom Domain Access
+
+Once DNS propagates (usually within seconds to a few minutes):
+1. Push documents with Pagebox:
+   ```bash
+   pagebox push
    ```
-
-For advanced configuration, custom ports, and service management troubleshooting, consult the [FAQ](docs/faq.md).
+2. Open `https://docs.yourdomain.com` in your browser. Cloudflare terminates SSL with a trusted certificate and proxies requests seamlessly to your S3 bucket.
 
 ---
 

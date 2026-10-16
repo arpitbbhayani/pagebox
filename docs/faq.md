@@ -1,37 +1,19 @@
 # Frequently Asked Questions (FAQ)
 
 ## Table of Contents
-- [Accessing Pagebox from Windows (WSL)](#accessing-pagebox-from-windows-wsl)
-- [Why is Pagebox running on port 8730 instead of port 80?](#why-is-pagebox-running-on-port-8730-instead-of-port-80)
+- [Why is Pagebox running on port 8732 instead of port 80?](#why-is-pagebox-running-on-port-8732-instead-of-port-80)
 - [How do I restart the Pagebox daemon?](#how-do-i-restart-the-pagebox-daemon)
 - [Troubleshooting: `systemctl --user` fails with "Failed to connect to bus" in WSL](#troubleshooting-systemctl---user-fails-with-failed-to-connect-to-bus-in-wsl)
 - [How do I change the port Pagebox runs on?](#how-do-i-change-the-port-pagebox-runs-on)
 
 ---
 
-### Accessing Pagebox from Windows (WSL)
+### Why is Pagebox default port 8732?
 
-**Q: I installed Pagebox inside WSL. How can I open `http://pagebox.local` in my Windows browser?**
-
-WSL2 forwards `localhost` traffic between Windows and Linux by default. To map `pagebox.local` on your Windows host:
-
-1. Open **Notepad** as Administrator (press <kbd>Win</kbd> + <kbd>S</kbd>, search for Notepad, right-click and choose **Run as administrator**).
-2. Open `C:\Windows\System32\drivers\etc\hosts` (set the file picker filter to *All Files (`*.*`)*).
-3. Add the following line to the end of the file:
-   ```text
-   127.0.0.1 pagebox.local
-   ```
-4. Save the file.
-5. You can now access your documents in any Windows browser at [http://pagebox.local:8730](http://pagebox.local:8730) (or `http://localhost:8730`).
-
----
-
-### Why is Pagebox default port 8730?
-
-**Q: Why does Pagebox default to port 8730 instead of 80?**
+**Q: Why does Pagebox default to port 8732 instead of 80?**
 
 1. **Privileged Port Restrictions**: On Linux and macOS, port numbers below 1024 (such as port 80) are privileged. Running on port 80 requires administrative setup or root permissions (`sudo`).
-2. **Safe, Unprivileged Operation**: Port `8730` is an unprivileged user port that runs out of the box without requiring sudo, special sysctl capability configurations, or administrative rights.
+2. **Safe, Unprivileged Operation**: Port `8732` is an unprivileged user port that runs out of the box without requiring sudo, special sysctl capability configurations, or administrative rights.
 
 You can configure Pagebox to run on port 80 or any custom port by setting `port = <number>` in `~/.pagebox/config.toml` or passing `--port <number>`.
 
@@ -100,4 +82,7 @@ Because the Pagebox systemd service is configured with `Restart=always`, you can
    pagebox serve --port 8080
    ```
 3. **Background Daemon**:
-   Update `~/.config/systemd/user/pagebox.service` (or `~/Library/LaunchAgents/me.arpitbhayani.pagebox.plist` on macOS) to pass `--port <number>` in the `ExecStart` command, then restart the daemon.
+   After updating `port = <number>` in `~/.pagebox/config.toml`, simply reinstall the daemon to apply the change:
+   ```bash
+   pagebox daemon install
+   ```

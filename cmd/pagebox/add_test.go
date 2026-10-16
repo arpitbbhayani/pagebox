@@ -191,7 +191,7 @@ func TestPageboxAddMarkdownFiles(t *testing.T) {
 	docsDir := filepath.Join(tmpHome, "markdown_docs_dir")
 	_ = os.MkdirAll(docsDir, 0755)
 
-	configContent := "docs_dir = \"" + docsDir + "\"\nport = 8730\npoll_interval = \"5m\"\n"
+	configContent := "docs_dir = \"" + docsDir + "\"\nport = 8732\npoll_interval = \"5m\"\n"
 	_ = os.MkdirAll(filepath.Join(tmpHome, ".pagebox"), 0700)
 	_ = os.WriteFile(filepath.Join(tmpHome, ".pagebox", "config.toml"), []byte(configContent), 0644)
 

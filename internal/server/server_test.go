@@ -48,7 +48,7 @@ func setupTestServer(t *testing.T) (*Server, string, func()) {
 
 	cfg := pbconfig.Config{
 		DocsDir:      tmpDir,
-		Port:         8730,
+		Port:         8732,
 		PollInterval: "5m",
 	}
 

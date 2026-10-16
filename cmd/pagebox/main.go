@@ -68,7 +68,8 @@ func main() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(deleteCmd)
 	rootCmd.AddCommand(serveCmd)
-	daemonInstallCmd.Flags().Bool("no-sudo", false, "skip privileged setup (hosts, port 80)")
+	daemonInstallCmd.Flags().Bool("no-sudo", false, "skip privileged setup (port 80 binding)")
+	daemonUninstallCmd.Flags().Bool("clean-system", false, "clean up privileged settings (/etc/hosts, sysctl)")
 	daemonUninstallCmd.Flags().Bool("no-sudo", false, "skip privileged cleanup")
 
 	daemonCmd.AddCommand(daemonInstallCmd)
@@ -77,6 +78,7 @@ func main() {
 	daemonCmd.AddCommand(daemonLogsCmd)
 	rootCmd.AddCommand(daemonCmd)
 
+	uninstallCmd.Flags().Bool("clean-system", false, "clean up privileged settings (/etc/hosts, sysctl)")
 	uninstallCmd.Flags().Bool("no-sudo", false, "skip privileged cleanup")
 	rootCmd.AddCommand(uninstallCmd)
 

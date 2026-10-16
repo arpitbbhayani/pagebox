@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
 )
 
 func Install(binPath string, port int) error {
@@ -82,7 +84,26 @@ func uninstallLaunchd() error {
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", "me.arpitbhayani.pagebox.plist")
 	
 	exec.Command("launchctl", "unload", plistPath).Run()
-	return os.Remove(plistPath)
+	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func daemonURL() string {
+	cfg, _ := pbconfig.Load()
+	port := cfg.Port
+	if port <= 0 {
+		port = 8732
+	}
+	host := cfg.Host
+	if host == "" {
+		host = "localhost"
+	}
+	if port == 80 {
+		return fmt.Sprintf("http://%s", host)
+	}
+	return fmt.Sprintf("http://%s:%d", host, port)
 }
 
 func statusLaunchd() (bool, string, error) {
@@ -92,7 +113,7 @@ func statusLaunchd() (bool, string, error) {
 	}
 	running := strings.Contains(string(out), "me.arpitbhayani.pagebox")
 	if running {
-		return true, "http://pagebox.local", nil
+		return true, daemonURL(), nil
 	}
 	return false, "", nil
 }
@@ -128,7 +149,7 @@ WantedBy=default.target
 		return err
 	}
 	
-	if err := exec.Command("systemctl", "--user", "start", "pagebox.service").Run(); err != nil {
+	if err := exec.Command("systemctl", "--user", "restart", "pagebox.service").Run(); err != nil {
 		return err
 	}
 
@@ -143,7 +164,9 @@ func uninstallSystemd() error {
 	
 	home, _ := os.UserHomeDir()
 	servicePath := filepath.Join(home, ".config", "systemd", "user", "pagebox.service")
-	os.Remove(servicePath)
+	if err := os.Remove(servicePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	
 	return exec.Command("systemctl", "--user", "daemon-reload").Run()
 }
@@ -152,7 +175,7 @@ func statusSystemd() (bool, string, error) {
 	err := exec.Command("systemctl", "--user", "is-active", "--quiet", "pagebox.service").Run()
 	running := (err == nil)
 	if running {
-		return true, "http://pagebox.local", nil
+		return true, daemonURL(), nil
 	}
 	return false, "", nil
 }

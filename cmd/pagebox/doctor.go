@@ -88,33 +88,45 @@ func checkS3(cfg pbconfig.Config) {
 }
 
 func checkNetwork() {
-	// Check /etc/hosts for pagebox.local
-	b, err := os.ReadFile("/etc/hosts")
-	if err != nil || !strings.Contains(string(b), "pagebox.local") {
-		ui.PrintWarn("hostname resolution", "pagebox.local missing from /etc/hosts", nil)
-	} else {
-		ui.PrintOk("hostname resolution", "pagebox.local mapped", nil)
+	cfg, _ := pbconfig.Load()
+	targetPort := cfg.Port
+	if targetPort <= 0 {
+		targetPort = 8732
 	}
 
-	if isWSL() {
-		ui.PrintInfo("WSL detected", "to open http://pagebox.local on Windows, add '127.0.0.1 pagebox.local' to C:\\Windows\\System32\\drivers\\etc\\hosts", nil)
+	// Check /etc/hosts for configured host
+	host := cfg.Host
+	if host == "" {
+		host = "localhost"
+	}
+	if host != "localhost" && host != "127.0.0.1" {
+		b, err := os.ReadFile("/etc/hosts")
+		if err != nil || !strings.Contains(string(b), host) {
+			ui.PrintWarn("hostname resolution", fmt.Sprintf("%s missing from /etc/hosts", host), nil)
+		} else {
+			ui.PrintOk("hostname resolution", fmt.Sprintf("%s mapped", host), nil)
+		}
 	}
 
-	// Check if port 80 is available (or bound by us)
-	ln, err := net.Listen("tcp", ":80")
+	// Check if targetPort is available (or bound by us)
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", targetPort))
 	if err != nil {
 		if strings.Contains(err.Error(), "permission denied") {
-			ui.PrintWarn("port 80", "unprivileged users cannot bind to port 80", nil)
-			ui.Hint("the daemon will fallback to an unprivileged port unless you run 'pagebox daemon install' to grant access", nil)
+			ui.PrintWarn(fmt.Sprintf("port %d", targetPort), fmt.Sprintf("unprivileged users cannot bind to port %d", targetPort), nil)
+			ui.Hint("run 'pagebox daemon install' to grant access or configure an unprivileged port", nil)
 		} else if strings.Contains(err.Error(), "address already in use") {
-			// This could be our own daemon, let's just warn
-			ui.PrintWarn("port 80", "already in use", nil)
+			running, _, _ := daemon.Status()
+			if running {
+				ui.PrintOk(fmt.Sprintf("port %d", targetPort), "bound by pagebox daemon", nil)
+			} else {
+				ui.PrintWarn(fmt.Sprintf("port %d", targetPort), "already in use by another process", nil)
+			}
 		} else {
-			ui.PrintErr("port 80", err.Error(), nil)
+			ui.PrintErr(fmt.Sprintf("port %d", targetPort), err.Error(), nil)
 		}
 	} else {
 		ln.Close()
-		ui.PrintOk("port 80", "available to bind", nil)
+		ui.PrintOk(fmt.Sprintf("port %d", targetPort), "available to bind", nil)
 	}
 }
 

@@ -27,8 +27,8 @@ func DefaultConfig() Config {
 	return Config{
 		Backend:      "s3",
 		DocsDir:      filepath.Join(home, "pagebox"),
-		Host:         "pagebox.local",
-		Port:         8730,
+		Host:         "localhost",
+		Port:         8732,
 		Bind:         "0.0.0.0",
 		PollInterval: "5m",
 		PushDebounce: "10s",

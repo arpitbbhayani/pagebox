@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,25 +28,6 @@ var daemonInstallCmd = &cobra.Command{
 
 		noSudo, _ := cmd.Flags().GetBool("no-sudo")
 
-		// One-time privileged setup
-		if !noSudo {
-			ui.PrintStep("sudo setup", "hosts entry and port 80 binding", nil)
-			
-			// Try to setup hosts
-			if !hasHostsEntry() {
-				ui.PrintInfo("adding 127.0.0.1 pagebox.local to /etc/hosts", "", nil)
-				execSudo("sh", "-c", "echo '127.0.0.1 pagebox.local' >> /etc/hosts")
-			} else {
-				ui.PrintInfo("hosts entry already exists", "", nil)
-			}
-
-			if runtime.GOOS == "linux" {
-				// Linux requires lowering unprivileged port start to bind 80
-				ui.PrintInfo("allowing unprivileged users to bind port 80", "/etc/sysctl.d/99-pagebox.conf", nil)
-				execSudo("sh", "-c", "echo 'net.ipv4.ip_unprivileged_port_start=80' > /etc/sysctl.d/99-pagebox.conf && sysctl --system")
-			}
-		}
-
 		binPath, err := os.Executable()
 		if err != nil {
 			ui.PrintErr("could not find executable path", err.Error(), nil)
@@ -58,7 +38,14 @@ var daemonInstallCmd = &cobra.Command{
 		cfg, _ := pbconfig.Load()
 		daemonPort := cfg.Port
 		if daemonPort <= 0 {
-			daemonPort = 8730
+			daemonPort = 8732
+		}
+
+		// Privileged setup (only if explicitly binding privileged port 80)
+		if !noSudo && runtime.GOOS == "linux" && daemonPort == 80 {
+			ui.PrintStep("sudo setup", "port 80 binding", nil)
+			ui.PrintInfo("allowing unprivileged users to bind port 80", "/etc/sysctl.d/99-pagebox.conf", nil)
+			execSudo("sh", "-c", "echo 'net.ipv4.ip_unprivileged_port_start=80' > /etc/sysctl.d/99-pagebox.conf && sysctl --system")
 		}
 
 		sp := ui.NewSpinner("Installing service")
@@ -74,8 +61,8 @@ var daemonInstallCmd = &cobra.Command{
 			serviceType = "launchd LaunchAgent"
 		}
 
-		localAddr := fmt.Sprintf("http://localhost:%d", cfg.Port)
-		if cfg.Port == 80 {
+		localAddr := fmt.Sprintf("http://localhost:%d", daemonPort)
+		if daemonPort == 80 {
 			localAddr = "http://localhost"
 		}
 
@@ -86,30 +73,17 @@ var daemonInstallCmd = &cobra.Command{
 		ui.KV("documents", cfg.DocsDir, 16, nil)
 		ui.KV("address", localAddr, 16, nil)
 		if cfg.Host != "" && cfg.Host != "127.0.0.1" && cfg.Host != "localhost" {
-			ui.KV("hostname", fmt.Sprintf("http://%s", cfg.Host), 16, nil)
-		}
-		if isWSL() {
-			for _, ip := range getHostIPs() {
-				wURL := fmt.Sprintf("http://%s:%d", ip, daemonPort)
-				if daemonPort == 80 {
-					wURL = fmt.Sprintf("http://%s", ip)
-				}
-				ui.KV("windows ip", wURL, 16, nil)
+			hostAddr := fmt.Sprintf("http://%s:%d", cfg.Host, daemonPort)
+			if daemonPort == 80 {
+				hostAddr = fmt.Sprintf("http://%s", cfg.Host)
 			}
+			ui.KV("hostname", hostAddr, 16, nil)
 		}
 		ui.Rule(nil)
 		ui.Hint("management commands:", nil)
 		ui.Bullet("view service status:   pagebox daemon status", nil)
 		ui.Bullet("stream live logs:      pagebox daemon logs", nil)
 		ui.Bullet("stop & uninstall:      pagebox uninstall", nil)
-
-		if isWSL() {
-			ui.Rule(nil)
-			ui.PrintInfo("WSL environment detected", "for Windows host browser access:", nil)
-			ui.Bullet("Access directly via http://localhost or http://127.0.0.1", nil)
-			ui.Bullet("To use http://pagebox.local on Windows, add this line to C:\\Windows\\System32\\drivers\\etc\\hosts (run Notepad as Admin):", nil)
-			ui.Command("127.0.0.1 pagebox.local", nil)
-		}
 	},
 }
 
@@ -118,7 +92,7 @@ var daemonUninstallCmd = &cobra.Command{
 	Short: "Stop and remove the background service",
 	Run: func(cmd *cobra.Command, args []string) {
 		ui.Heading("daemon uninstall", nil, nil)
-		noSudo, _ := cmd.Flags().GetBool("no-sudo")
+		cleanSystem, _ := cmd.Flags().GetBool("clean-system")
 
 		sp := ui.NewSpinner("Removing service")
 		err := daemon.Uninstall()
@@ -130,14 +104,29 @@ var daemonUninstallCmd = &cobra.Command{
 			ui.PrintOk("daemon stopped and removed", "", nil)
 		}
 
-		if !noSudo {
-			// Best effort cleanup
-			execSudo("sh", "-c", "sed -i.bak '/127.0.0.1 pagebox.local/d' /etc/hosts")
-			if runtime.GOOS == "linux" {
-				execSudo("rm", "-f", "/etc/sysctl.d/99-pagebox.conf")
-				execSudo("sysctl", "--system")
+		if cleanSystem {
+			cfg, _ := pbconfig.Load()
+			hostToClean := cfg.Host
+			if hostToClean == "" {
+				hostToClean = "localhost"
 			}
-			ui.PrintOk("cleaned up privileged settings", "", nil)
+			cleaned := false
+			if hasHostsEntry(hostToClean) {
+				ui.PrintStep("sudo cleanup", fmt.Sprintf("removing %s from /etc/hosts", hostToClean), nil)
+				execSudo("sh", "-c", fmt.Sprintf("sed -i.bak '/127.0.0.1 %s/d' /etc/hosts", hostToClean))
+				cleaned = true
+			}
+			if runtime.GOOS == "linux" {
+				if _, err := os.Stat("/etc/sysctl.d/99-pagebox.conf"); err == nil {
+					ui.PrintStep("sudo cleanup", "removing /etc/sysctl.d/99-pagebox.conf", nil)
+					execSudo("rm", "-f", "/etc/sysctl.d/99-pagebox.conf")
+					execSudo("sysctl", "--system")
+					cleaned = true
+				}
+			}
+			if cleaned {
+				ui.PrintOk("cleaned up privileged settings", "", nil)
+			}
 		}
 
 		ui.Hint("pagebox background service has been completely uninstalled.", nil)
@@ -186,12 +175,15 @@ var daemonLogsCmd = &cobra.Command{
 
 
 
-func hasHostsEntry() bool {
+func hasHostsEntry(host string) bool {
+	if host == "" || host == "localhost" || host == "127.0.0.1" {
+		return true
+	}
 	b, err := os.ReadFile("/etc/hosts")
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(b), "pagebox.local")
+	return strings.Contains(string(b), host)
 }
 
 func execSudo(name string, arg ...string) {
@@ -199,52 +191,4 @@ func execSudo(name string, arg ...string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Run()
-}
-
-func isWSL() bool {
-	if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "" {
-		return true
-	}
-	b, err := os.ReadFile("/proc/version")
-	if err == nil {
-		s := strings.ToLower(string(b))
-		if strings.Contains(s, "microsoft") || strings.Contains(s, "wsl") {
-			return true
-		}
-	}
-	return false
-}
-
-func getHostIPs() []string {
-	var ips []string
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip == nil || ip.IsLoopback() {
-				continue
-			}
-			ip = ip.To4()
-			if ip != nil {
-				ips = append(ips, ip.String())
-			}
-		}
-	}
-	return ips
 }
