@@ -26,7 +26,7 @@ Pagebox bridges the gap between cloud storage and local workflows:
 Install the latest binary using the universal install script:
 
 ```bash
-curl -fsSL https://pagebox.arpitbhayani.me/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/arpitbbhayani/pagebox/refs/heads/master/install.sh | sh
 ```
 
 The script automatically detects your OS and architecture (`amd64`, `arm64`, `arm`, `386`, `riscv64`), places the executable in your `$PATH` (e.g. `~/.local/bin` or `/usr/local/bin`), and configures your shell environment (`~/.zshrc`, `~/.bashrc`, `~/.config/fish/config.fish`).
