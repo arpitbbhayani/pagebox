@@ -142,34 +142,18 @@ elif [ -n "${INSTALL_DIR:-}" ] && is_writable "$INSTALL_DIR"; then
   TARGET_DIR="$INSTALL_DIR"
 fi
 
-# Priority 2: User-writable directories that are ALREADY in PATH
-if [ -z "$TARGET_DIR" ]; then
-  for d in "${HOME:-}/.local/bin" "${HOME:-}/bin" "/usr/local/bin"; do
-    if [ -n "$d" ]; then
-      case ":${PATH:-}:" in
-        *":$d:"*)
-          if is_writable "$d"; then
-            TARGET_DIR="$d"
-            break
-          fi
-          ;;
-      esac
-    fi
-  done
-fi
-
-# Priority 3: Standard user directory fallbacks
+# Priority 2: Standard installation directory (default: ~/.local/bin)
 if [ -z "$TARGET_DIR" ]; then
   if [ -n "${HOME:-}" ] && is_writable "${HOME}/.local/bin"; then
     TARGET_DIR="${HOME}/.local/bin"
-  elif [ -n "${HOME:-}" ] && is_writable "${HOME}/bin"; then
-    TARGET_DIR="${HOME}/bin"
   elif is_writable "/usr/local/bin"; then
     TARGET_DIR="/usr/local/bin"
+  elif [ -n "${HOME:-}" ] && is_writable "${HOME}/bin"; then
+    TARGET_DIR="${HOME}/bin"
   fi
 fi
 
-# Priority 4: Last resort — requiring sudo
+# Priority 3: Fallback requiring elevated permissions
 if [ -z "$TARGET_DIR" ]; then
   if command -v sudo >/dev/null 2>&1 && [ -d "/usr/local/bin" ]; then
     USE_SUDO=1
@@ -182,26 +166,6 @@ fi
 
 TARGET_BIN="${TARGET_DIR}/pagebox${BINARY_EXT}"
 
-# 6. Check existing installation and version
-ACTION="Installed"
-CURRENT_VER=""
-if [ -f "$TARGET_BIN" ] || [ -L "$TARGET_BIN" ]; then
-  if [ -x "$TARGET_BIN" ]; then
-    CURRENT_VER=$("$TARGET_BIN" version 2>&1 | grep -oE "[0-9]+\.[0-9]+(\.[0-9]+)?" | head -n 1 || true)
-    if [ -z "$CURRENT_VER" ]; then
-      CURRENT_VER=$("$TARGET_BIN" --version 2>&1 | grep -oE "[0-9]+\.[0-9]+(\.[0-9]+)?" | head -n 1 || true)
-    fi
-  fi
-
-  if [ -n "$CURRENT_VER" ]; then
-    log_step "Found existing pagebox v${CURRENT_VER} at ${BOLD}${TARGET_BIN}${RESET}"
-    ACTION="Updated"
-  else
-    log_step "Replacing existing binary at ${BOLD}${TARGET_BIN}${RESET}..."
-    ACTION="Replaced"
-  fi
-fi
-
 BINARY_NAME="pagebox-${VERSION}-${OS}-${ARCH}${BINARY_EXT}"
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${BINARY_NAME}"
 FALLBACK_URL="https://github.com/${REPO}/releases/download/${VERSION}/${BINARY_NAME}"
@@ -211,9 +175,9 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 TMP_FILE="${TMP_DIR}/pagebox"
 
-# 7. Download or build binary
+# 6. Download or build fresh binary
 DOWNLOADED=0
-log_step "Downloading ${BINARY_NAME}..."
+log_step "Downloading fresh binary ${BINARY_NAME}..."
 
 if fetch_file "$DOWNLOAD_URL" "$TMP_FILE" 2>/dev/null && [ -s "$TMP_FILE" ]; then
   DOWNLOADED=1
@@ -255,7 +219,7 @@ fi
 
 chmod +x "$TMP_FILE"
 
-# 8. Install / Replace binary
+# 7. Install fresh binary
 log_step "Installing to ${BOLD}${TARGET_BIN}${RESET}..."
 
 if [ "${USE_SUDO:-0}" = "1" ]; then
@@ -269,11 +233,7 @@ else
   chmod 755 "$TARGET_BIN"
 fi
 
-if [ "$ACTION" = "Updated" ] && [ -n "$CURRENT_VER" ]; then
-  log_info "pagebox successfully updated (v${CURRENT_VER} -> v${VERSION})!"
-else
-  log_info "pagebox v${VERSION} installed successfully!"
-fi
+log_info "pagebox v${VERSION} installed successfully!"
 
 # 9. Check if TARGET_DIR is in PATH
 PATH_ALREADY_CONFIGURED=0
