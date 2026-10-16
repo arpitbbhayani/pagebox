@@ -438,3 +438,97 @@ func TestMarkdownDocumentServing(t *testing.T) {
 	}
 }
 
+func TestMarkdownFrontmatterAndTableRendering(t *testing.T) {
+	srv, tmpDir, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	docID := "internals/verification-bottleneck"
+	docKey := "internals/verification-bottleneck.md"
+	docPath := filepath.Join(tmpDir, "internals", "verification-bottleneck.md")
+	_ = os.MkdirAll(filepath.Dir(docPath), 0755)
+
+	content := `---
+title: "The Verification Bottleneck"
+description: "Whitepaper on why code understanding limits speed."
+---
+
+Why the future of software engineering belongs to code understanding.
+
+| Grade | Meaning |
+| --- | --- |
+| Confirmed | Proven by test |
+`
+	if err := os.WriteFile(docPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test doc: %v", err)
+	}
+
+	_ = srv.idx.Update(docID, func(e *index.Entry) {
+		e.ID = docID
+		e.Key = docKey
+		e.State = index.StateCached
+		e.RemoteETag = "dummy-etag"
+		e.Size = int64(len(content))
+	})
+
+	// 1. Test viewer page extracts title into document title and breadcrumb
+	viewerReq := httptest.NewRequest(http.MethodGet, "/"+docID, nil)
+	viewerRec := httptest.NewRecorder()
+	srv.ServeHTTP(viewerRec, viewerReq)
+
+	if viewerRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", viewerRec.Code)
+	}
+	viewerBody := viewerRec.Body.String()
+	if !strings.Contains(viewerBody, "<title>The Verification Bottleneck · /pagebox</title>") {
+		t.Errorf("expected title to be 'The Verification Bottleneck', got:\n%s", viewerBody)
+	}
+	if !strings.Contains(viewerBody, "The Verification Bottleneck</span>") {
+		t.Errorf("expected breadcrumb to show 'The Verification Bottleneck'")
+	}
+
+	// 2. Test viewer page with trailing slash
+	trailingReq := httptest.NewRequest(http.MethodGet, "/"+docID+"/", nil)
+	trailingRec := httptest.NewRecorder()
+	srv.ServeHTTP(trailingRec, trailingReq)
+	if trailingRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for trailing slash, got %d", trailingRec.Code)
+	}
+
+	// 3. Test rendered markdown page (?render=1)
+	renderReq := httptest.NewRequest(http.MethodGet, "/"+docID+"?render=1", nil)
+	renderRec := httptest.NewRecorder()
+	srv.ServeHTTP(renderRec, renderReq)
+
+	if renderRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for ?render=1, got %d", renderRec.Code)
+	}
+	renderBody := renderRec.Body.String()
+
+	// Should contain styled header
+	if !strings.Contains(renderBody, `<h1 class="aui-prose-title">The Verification Bottleneck</h1>`) {
+		t.Errorf("expected aui-prose-title with 'The Verification Bottleneck'")
+	}
+	if !strings.Contains(renderBody, `<meta name="description" content="Whitepaper on why code understanding limits speed.">`) {
+		t.Errorf("expected meta description tag with description")
+	}
+
+	// Raw markdown script block must NOT contain the YAML delimiters
+	if strings.Contains(renderBody, `<script type="text/markdown" id="raw-markdown">---`) {
+		t.Errorf("expected raw-markdown script block to have frontmatter stripped")
+	}
+
+	// Must include table-wrap logic, heading anchor logic, layout, and TOC
+	if !strings.Contains(renderBody, "aui-table-wrap") {
+		t.Errorf("expected aui-table-wrap in render script")
+	}
+	if !strings.Contains(renderBody, "aui-heading-anchor") {
+		t.Errorf("expected aui-heading-anchor in render script")
+	}
+	if !strings.Contains(renderBody, "aui-doc-layout") {
+		t.Errorf("expected aui-doc-layout in render template")
+	}
+	if !strings.Contains(renderBody, "aui-toc-container") {
+		t.Errorf("expected aui-toc-container in render template")
+	}
+}
+

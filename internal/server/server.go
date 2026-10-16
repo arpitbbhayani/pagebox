@@ -73,7 +73,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := strings.TrimPrefix(r.URL.Path, "/")
+	id := strings.Trim(r.URL.Path, "/")
 	id = index.TrimDocExt(id)
 
 	if id == "" {
@@ -554,13 +554,24 @@ func (s *Server) serveDocumentViewer(w http.ResponseWriter, r *http.Request, id 
 		state = "cached"
 	}
 
-	escapedID := html.EscapeString(id)
+	displayTitle := id
+	if isMarkdown {
+		localPath := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(entry.Key))
+		if b, err := os.ReadFile(localPath); err == nil {
+			meta, _ := parseFrontmatter(string(b))
+			if t, ok := meta["title"]; ok && strings.TrimSpace(t) != "" {
+				displayTitle = strings.TrimSpace(t)
+			}
+		}
+	}
+
+	escapedID := html.EscapeString(displayTitle)
 	rawURL := "/" + escapeURLPath(id) + "?raw=1"
 	frameURL := rawURL
 	if isMarkdown {
 		frameURL = "/" + escapeURLPath(id) + "?render=1"
 	}
-	breadcrumbs := renderBreadcrumbs(id)
+	breadcrumbs := renderBreadcrumbs(id, displayTitle)
 
 	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
@@ -818,6 +829,23 @@ html, body {
 				}
 			} catch (e) {}
 		});
+
+		// Forward initial hash to iframe if present
+		if (window.location.hash) {
+			var baseSrc = frame.getAttribute('src');
+			if (baseSrc && baseSrc.indexOf('#') === -1) {
+				frame.src = baseSrc + window.location.hash;
+			}
+		}
+
+		// Listen for hash sync from iframe
+		window.addEventListener('message', function(e) {
+			if (e.data && e.data.type === 'pagebox-hashchange') {
+				if (window.location.hash !== e.data.hash) {
+					history.replaceState(null, null, e.data.hash || window.location.pathname);
+				}
+			}
+		});
 	}
 })();
 </script>
@@ -836,6 +864,66 @@ html, body {
 	w.Write([]byte(htmlContent))
 }
 
+func parseFrontmatter(content string) (map[string]string, string) {
+	meta := make(map[string]string)
+	trimmed := strings.TrimLeft(content, "\r\n\t ")
+	if !strings.HasPrefix(trimmed, "---") {
+		return meta, content
+	}
+
+	rest := trimmed[3:]
+	if !strings.HasPrefix(rest, "\n") && !strings.HasPrefix(rest, "\r\n") {
+		return meta, content
+	}
+
+	idx := strings.Index(rest, "\n---")
+	if idx == -1 {
+		return meta, content
+	}
+
+	yamlBlock := rest[:idx]
+	markdown := rest[idx+4:]
+	if strings.HasPrefix(markdown, "\r\n") {
+		markdown = markdown[2:]
+	} else if strings.HasPrefix(markdown, "\n") {
+		markdown = markdown[1:]
+	}
+
+	lines := strings.Split(yamlBlock, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		colonIdx := strings.Index(line, ":")
+		if colonIdx != -1 {
+			k := strings.ToLower(strings.TrimSpace(line[:colonIdx]))
+			v := strings.TrimSpace(line[colonIdx+1:])
+			if (strings.HasPrefix(v, "\"") && strings.HasSuffix(v, "\"")) ||
+				(strings.HasPrefix(v, "'") && strings.HasSuffix(v, "'")) {
+				if len(v) >= 2 {
+					v = v[1 : len(v)-1]
+				}
+			}
+			meta[k] = v
+		}
+	}
+
+	return meta, markdown
+}
+
+func startsWithH1(md string) bool {
+	lines := strings.Split(strings.TrimSpace(md), "\n")
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		return strings.HasPrefix(l, "# ")
+	}
+	return false
+}
+
 func (s *Server) serveMarkdownRenderer(w http.ResponseWriter, r *http.Request, id string, entry index.Entry, localPath string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
@@ -845,18 +933,37 @@ func (s *Server) serveMarkdownRenderer(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	escapedScript := escapeScriptContent(string(content))
-	escapedID := html.EscapeString(id)
+	meta, cleanMarkdown := parseFrontmatter(string(content))
+
+	docTitle := id
+	if t, ok := meta["title"]; ok && strings.TrimSpace(t) != "" {
+		docTitle = strings.TrimSpace(t)
+	}
+
+	var headerHTML string
+	if t, ok := meta["title"]; ok && strings.TrimSpace(t) != "" && !startsWithH1(cleanMarkdown) {
+		headerHTML = fmt.Sprintf(`<header class="aui-prose-header"><h1 class="aui-prose-title">%s</h1></header>`,
+			html.EscapeString(strings.TrimSpace(t)))
+	}
+
+	var metaDescTag string
+	if desc, ok := meta["description"]; ok && strings.TrimSpace(desc) != "" {
+		metaDescTag = fmt.Sprintf(`<meta name="description" content="%s">`, html.EscapeString(strings.TrimSpace(desc)))
+	}
+
+	escapedScript := escapeScriptContent(cleanMarkdown)
+	escapedTitle := html.EscapeString(docTitle)
 
 	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+%s
 <title>%s · /pagebox</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Lora:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Lora:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
 <script>
 (function() {
 	var saved = localStorage.getItem('aui-theme');
@@ -870,28 +977,40 @@ func (s *Server) serveMarkdownRenderer(w http.ResponseWriter, r *http.Request, i
 <style>
 %s
 
-/* Markdown Prose Styles */
+/* Refined Editorial Markdown Styles */
+:root {
+	--aui-font-prose: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
 html, body {
 	margin: 0;
 	padding: 0;
 	background: var(--aui-bg);
 	color: var(--aui-text);
-	font-family: var(--aui-font-sans);
-	line-height: 1.65;
+	font-family: var(--aui-font-prose);
+	line-height: 1.75;
 	-webkit-font-smoothing: antialiased;
 }
 
-.aui-prose-container {
-	max-width: 820px;
+.aui-doc-layout {
+	display: flex;
+	justify-content: center;
+	max-width: 1140px;
 	margin: 0 auto;
-	padding: 40px 28px 80px;
+	padding: 40px 24px 96px;
 	box-sizing: border-box;
+	gap: 48px;
+}
+
+.aui-prose-container {
+	flex: 1;
+	min-width: 0;
+	max-width: 760px;
 }
 
 .aui-prose {
-	font-size: 15.5px;
-	line-height: 1.7;
-	letter-spacing: -0.012em;
+	font-size: 16px;
+	line-height: 1.75;
 	color: var(--aui-text);
 	word-break: break-word;
 }
@@ -900,61 +1019,122 @@ html, body {
 	margin-top: 0 !important;
 }
 
-/* Headings */
-.aui-prose h1, .aui-prose h2, .aui-prose h3, .aui-prose h4, .aui-prose h5, .aui-prose h6 {
-	font-family: var(--aui-font-sans);
-	color: var(--aui-text);
-	letter-spacing: -0.02em;
-	line-height: 1.25;
-	margin-top: 36px;
-	margin-bottom: 16px;
-}
-
-.aui-prose h1 {
-	font-size: 30px;
-	font-weight: 700;
-	padding-bottom: 12px;
-	border-bottom: 1px solid var(--aui-border);
+/* Document Header */
+.aui-prose-header {
 	margin-bottom: 24px;
 }
 
-.aui-prose h2 {
-	font-size: 22px;
-	font-weight: 600;
-	padding-bottom: 8px;
+.aui-prose-title {
+	font-family: var(--aui-font-prose);
+	font-size: 36px;
+	font-weight: 700;
+	letter-spacing: -0.025em;
+	line-height: 1.2;
+	color: var(--aui-text);
+	margin: 0 0 16px 0 !important;
+}
+
+/* Subtitle and Author Byline */
+.aui-prose-subtitle {
+	font-size: 18.5px;
+	line-height: 1.55;
+	color: var(--aui-text);
+	font-weight: 500;
+	margin-top: 0;
+	margin-bottom: 12px;
+}
+
+.aui-prose-byline {
+	font-size: 13.5px;
+	line-height: 1.5;
+	color: var(--aui-text-muted);
+	font-family: var(--aui-font-mono);
+	margin-top: 0;
+	margin-bottom: 36px;
+	padding-bottom: 20px;
 	border-bottom: 1px solid var(--aui-border-subtle);
-	margin-top: 36px;
+}
+
+/* Headings */
+.aui-prose h1, .aui-prose h2, .aui-prose h3, .aui-prose h4, .aui-prose h5, .aui-prose h6 {
+	font-family: var(--aui-font-prose);
+	color: var(--aui-text);
+	letter-spacing: -0.02em;
+	line-height: 1.28;
+	position: relative;
+	scroll-margin-top: 28px;
+}
+
+.aui-prose h1 {
+	font-size: 32px;
+	font-weight: 700;
+	margin-top: 48px;
+	margin-bottom: 20px;
+}
+
+.aui-prose h2 {
+	font-size: 23px;
+	font-weight: 600;
+	margin-top: 48px;
+	margin-bottom: 16px;
 }
 
 .aui-prose h3 {
-	font-size: 18px;
+	font-size: 17.5px;
 	font-weight: 600;
-	margin-top: 28px;
+	margin-top: 32px;
+	margin-bottom: 12px;
 }
 
 .aui-prose h4, .aui-prose h5, .aui-prose h6 {
-	font-size: 14.5px;
+	font-size: 14px;
 	font-weight: 600;
 	color: var(--aui-text-muted);
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
+	margin-top: 24px;
+	margin-bottom: 8px;
+}
+
+.aui-heading-anchor {
+	opacity: 0;
+	margin-left: 8px;
+	color: var(--aui-text-faint);
+	text-decoration: none !important;
+	font-weight: 400;
+	font-size: 0.85em;
+	transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.aui-prose h1:hover .aui-heading-anchor,
+.aui-prose h2:hover .aui-heading-anchor,
+.aui-prose h3:hover .aui-heading-anchor,
+.aui-prose h4:hover .aui-heading-anchor {
+	opacity: 1;
+}
+
+.aui-heading-anchor:hover {
+	color: var(--aui-crimson) !important;
 }
 
 /* Paragraphs & Text */
 .aui-prose p {
 	margin-top: 0;
-	margin-bottom: 18px;
+	margin-bottom: 20px;
 }
 
 .aui-prose a {
-	color: var(--aui-crimson);
-	text-decoration: none;
-	border-bottom: 1px solid transparent;
-	transition: border-color 0.15s ease, color 0.15s ease;
+	color: var(--aui-blue);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 2.5px;
+	text-decoration-color: var(--aui-blue-border);
+	transition: all 0.15s ease;
 }
 
 .aui-prose a:hover {
-	border-bottom-color: var(--aui-crimson);
+	color: var(--aui-crimson);
+	text-decoration-color: var(--aui-crimson);
 }
 
 .aui-prose strong {
@@ -969,19 +1149,24 @@ html, body {
 
 /* Blockquotes */
 .aui-prose blockquote {
-	margin: 24px 0;
-	padding: 12px 20px;
+	margin: 28px 0;
+	padding: 14px 22px;
 	background: var(--aui-bg-subtle);
 	border-left: 3px solid var(--aui-crimson);
 	border-radius: 0 4px 4px 0;
 	font-family: var(--aui-font-serif);
 	font-style: italic;
-	font-size: 15.5px;
-	color: var(--aui-text-muted);
+	font-size: 16.5px;
+	line-height: 1.7;
+	color: var(--aui-text);
 }
 
-.aui-prose blockquote p:last-child {
-	margin-bottom: 0;
+.aui-prose blockquote p {
+	margin: 0;
+}
+
+.aui-prose blockquote p + p {
+	margin-top: 10px;
 }
 
 /* Inline Code & Blocks */
@@ -993,6 +1178,11 @@ html, body {
 	border-radius: 4px;
 	padding: 2px 6px;
 	color: var(--aui-text);
+	white-space: nowrap;
+}
+
+.aui-prose pre code {
+	white-space: pre;
 }
 
 .aui-prose pre {
@@ -1012,7 +1202,6 @@ html, body {
 	padding: 0;
 	font-size: 13.5px;
 	color: var(--aui-text);
-	white-space: pre;
 }
 
 .aui-code-copy-btn {
@@ -1053,12 +1242,22 @@ html, body {
 /* Lists */
 .aui-prose ul, .aui-prose ol {
 	padding-left: 24px;
-	margin: 0 0 20px;
+	margin: 0 0 22px;
 }
 
 .aui-prose li {
-	margin: 6px 0;
-	line-height: 1.65;
+	margin: 8px 0;
+	line-height: 1.7;
+}
+
+.aui-prose ol > li {
+	padding-left: 4px;
+}
+
+.aui-prose ol > li::marker {
+	font-family: var(--aui-font-mono);
+	font-weight: 600;
+	color: var(--aui-text-muted);
 }
 
 .aui-prose li > ul, .aui-prose li > ol {
@@ -1071,34 +1270,54 @@ html, body {
 	margin-right: 6px;
 }
 
-/* Tables */
-.aui-prose table {
+/* Clean Editorial Tables */
+.aui-table-wrap {
+	width: 100%%;
+	overflow-x: auto;
+	margin: 32px 0;
+	-webkit-overflow-scrolling: touch;
+	border: 1px solid var(--aui-border);
+	border-radius: 6px;
+	background: var(--aui-bg-card);
+}
+
+.aui-table-wrap table {
 	width: 100%%;
 	border-collapse: collapse;
-	margin: 24px 0;
+	margin: 0 !important;
+	border: none !important;
 	font-size: 13.5px;
+	line-height: 1.5;
 }
 
-.aui-prose th {
+.aui-table-wrap th {
+	background: var(--aui-bg-subtle);
 	font-family: var(--aui-font-mono);
-	font-size: 12px;
+	font-size: 11.5px;
 	font-weight: 600;
 	text-transform: uppercase;
-	letter-spacing: 0.04em;
-	text-align: left;
-	padding: 10px 14px;
-	background: var(--aui-bg-subtle);
-	border: 1px solid var(--aui-border);
+	letter-spacing: 0.05em;
 	color: var(--aui-text-muted);
+	padding: 10px 16px;
+	border-bottom: 1px solid var(--aui-border);
+	text-align: left;
+	white-space: nowrap;
 }
 
-.aui-prose td {
-	padding: 10px 14px;
-	border: 1px solid var(--aui-border);
+.aui-table-wrap td {
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--aui-border-subtle);
 	color: var(--aui-text);
+	font-size: 13.5px;
+	line-height: 1.55;
+	vertical-align: top;
 }
 
-.aui-prose tr:nth-child(even) {
+.aui-table-wrap tr:last-child td {
+	border-bottom: none;
+}
+
+.aui-table-wrap tr:hover td {
 	background: var(--aui-bg-subtle);
 }
 
@@ -1106,7 +1325,7 @@ html, body {
 .aui-prose hr {
 	border: none;
 	border-top: 1px solid var(--aui-border);
-	margin: 36px 0;
+	margin: 40px 0;
 }
 
 /* Images */
@@ -1115,50 +1334,144 @@ html, body {
 	height: auto;
 	border-radius: 4px;
 	border: 1px solid var(--aui-border);
-	margin: 16px 0;
+	margin: 20px 0;
+}
+
+/* Table of Contents */
+.aui-toc-container {
+	width: 240px;
+	flex-shrink: 0;
+}
+
+.aui-toc-sticky {
+	position: sticky;
+	top: 36px;
+	max-height: calc(100vh - 72px);
+	overflow-y: auto;
+	padding-left: 16px;
+	border-left: 1px solid var(--aui-border);
+}
+
+.aui-toc-title {
+	font-family: var(--aui-font-mono);
+	font-size: 11.5px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--aui-text-muted);
+	margin-bottom: 12px;
+}
+
+.aui-toc-nav {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.aui-toc-link {
+	font-size: 12.5px;
+	line-height: 1.4;
+	color: var(--aui-text-muted);
+	text-decoration: none !important;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	border-radius: 3px;
+	padding: 3px 6px;
+	transition: all 0.15s ease;
+}
+
+.aui-toc-link:hover {
+	color: var(--aui-text);
+	background: var(--aui-bg-subtle);
+}
+
+.aui-toc-link.active {
+	color: var(--aui-crimson);
+	font-weight: 600;
+}
+
+.aui-toc-link.aui-toc-h3 {
+	padding-left: 14px;
+	font-size: 12px;
+	color: var(--aui-text-faint);
+}
+
+.aui-toc-link.aui-toc-h3:hover {
+	color: var(--aui-text);
+}
+
+@media (max-width: 960px) {
+	.aui-toc-container {
+		display: none !important;
+	}
+	.aui-doc-layout {
+		padding: 24px 16px 64px;
+		gap: 0;
+	}
 }
 </style>
 <script src="/_pagebox/assets/marked.min.js"></script>
 </head>
 <body>
-<div class="aui-prose-container">
-	<article class="aui-prose" id="content">
-		<div style="font-family: var(--aui-font-mono); color: var(--aui-text-muted); font-size: 13px;">Rendering document...</div>
-	</article>
+<div class="aui-doc-layout">
+	<div class="aui-prose-container">
+		<article class="aui-prose" id="content">
+			%s
+			<div id="prose-body">
+				<div style="font-family: var(--aui-font-mono); color: var(--aui-text-muted); font-size: 13px;">Rendering document...</div>
+			</div>
+		</article>
+	</div>
+	<aside class="aui-toc-container" id="toc-container" style="display: none;">
+		<div class="aui-toc-sticky">
+			<div class="aui-toc-title">On this page</div>
+			<nav class="aui-toc-nav" id="toc-nav"></nav>
+		</div>
+	</aside>
 </div>
 
 <script type="text/markdown" id="raw-markdown">%s</script>
 
 <script>
 (function() {
+	function updateHash(hash) {
+		try {
+			if (window.parent && window.parent !== window) {
+				window.parent.postMessage({ type: 'pagebox-hashchange', hash: hash }, '*');
+			}
+		} catch (e) {}
+	}
+
 	function renderMarkdown() {
 		var scriptEl = document.getElementById('raw-markdown');
 		var raw = scriptEl ? scriptEl.textContent : '';
 		raw = raw.replace(/<\\\/script/gi, '</script>');
 
-		var contentEl = document.getElementById('content');
+		var bodyEl = document.getElementById('prose-body');
 		if (typeof marked !== 'undefined') {
 			marked.setOptions({
 				gfm: true,
 				breaks: false
 			});
-			contentEl.innerHTML = marked.parse(raw);
+			bodyEl.innerHTML = marked.parse(raw);
 		} else {
 			// Fallback if marked is loading or unavailable
 			fetch(window.location.pathname + '?raw=1')
 				.then(function(r) { return r.text(); })
 				.then(function(txt) {
+					var clean = txt.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
 					if (typeof marked !== 'undefined') {
-						contentEl.innerHTML = marked.parse(txt);
+						bodyEl.innerHTML = marked.parse(clean);
 					} else {
-						contentEl.innerHTML = '<pre><code>' + txt.replace(/[&<>'"]/g, function(c) {
+						bodyEl.innerHTML = '<pre><code>' + clean.replace(/[&<>'"]/g, function(c) {
 							return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c];
 						}) + '</code></pre>';
 					}
 					enhanceProse();
 				})
 				.catch(function(err) {
-					contentEl.innerHTML = '<p style="color:var(--aui-rose);">Failed to render markdown: ' + err + '</p>';
+					bodyEl.innerHTML = '<p style="color:var(--aui-rose);">Failed to render markdown: ' + err + '</p>';
 				});
 			return;
 		}
@@ -1170,11 +1483,97 @@ html, body {
 		var contentEl = document.getElementById('content');
 		if (!contentEl) return;
 
-		// Extract first h1 as document title
+		// Extract first h1 as document title if not set
 		var h1 = contentEl.querySelector('h1');
-		if (h1 && h1.textContent) {
+		if (h1 && h1.textContent && !document.title) {
 			document.title = h1.textContent.trim() + ' · /pagebox';
 		}
+
+		// Style subtitle and byline if present between title and first h2
+		var firstH2 = contentEl.querySelector('h2');
+		var firstP = contentEl.querySelector('#prose-body > p:first-of-type');
+		if (firstP && (!firstH2 || (firstP.compareDocumentPosition(firstH2) & Node.DOCUMENT_POSITION_FOLLOWING))) {
+			firstP.classList.add('aui-prose-subtitle');
+			var secondP = firstP.nextElementSibling;
+			if (secondP && secondP.tagName === 'P' && (!firstH2 || (secondP.compareDocumentPosition(firstH2) & Node.DOCUMENT_POSITION_FOLLOWING))) {
+				secondP.classList.add('aui-prose-byline');
+			}
+		}
+
+		// Ensure all headings have IDs for anchor links
+		var headings = contentEl.querySelectorAll('h1, h2, h3, h4, h5, h6');
+		headings.forEach(function(h) {
+			if (!h.id) {
+				var text = h.textContent.trim();
+				var slug = text.toLowerCase()
+					.replace(/<[^>]+>/g, '')
+					.replace(/[^\w\s-]/g, '')
+					.replace(/\s+/g, '-');
+				if (slug) h.id = slug;
+			}
+			if (h.id && !h.querySelector('.aui-heading-anchor') && !h.classList.contains('aui-prose-title')) {
+				var a = document.createElement('a');
+				a.className = 'aui-heading-anchor';
+				a.href = '#' + h.id;
+				a.setAttribute('aria-label', 'Link to section');
+				a.textContent = '#';
+				h.appendChild(a);
+			}
+		});
+
+		// Build Table of Contents from h2 and h3 headings
+		var tocNav = document.getElementById('toc-nav');
+		var tocContainer = document.getElementById('toc-container');
+		var tocHeadings = contentEl.querySelectorAll('h2, h3');
+		if (tocHeadings.length >= 2 && tocNav && tocContainer) {
+			tocNav.innerHTML = '';
+			tocHeadings.forEach(function(h) {
+				if (!h.id) return;
+				var link = document.createElement('a');
+				link.href = '#' + h.id;
+				link.className = 'aui-toc-link aui-toc-' + h.tagName.toLowerCase();
+				var clone = h.cloneNode(true);
+				var anchor = clone.querySelector('.aui-heading-anchor');
+				if (anchor) anchor.remove();
+				link.textContent = clone.textContent.trim();
+				link.title = link.textContent;
+				link.addEventListener('click', function(e) {
+					e.preventDefault();
+					h.scrollIntoView({ behavior: 'smooth' });
+					updateHash('#' + h.id);
+					history.pushState(null, null, '#' + h.id);
+				});
+				tocNav.appendChild(link);
+			});
+			tocContainer.style.display = 'block';
+
+			// IntersectionObserver to highlight active TOC heading on scroll
+			if ('IntersectionObserver' in window) {
+				var tocObserver = new IntersectionObserver(function(entries) {
+					entries.forEach(function(entry) {
+						if (entry.isIntersecting) {
+							var id = entry.target.id;
+							var activeLink = tocNav.querySelector('a[href="#' + id + '"]');
+							if (activeLink) {
+								tocNav.querySelectorAll('.aui-toc-link').forEach(function(l) { l.classList.remove('active'); });
+								activeLink.classList.add('active');
+							}
+						}
+					});
+				}, { rootMargin: '0px 0px -70%% 0px' });
+
+				tocHeadings.forEach(function(h) { tocObserver.observe(h); });
+			}
+		}
+
+		// Wrap tables for responsive horizontal scrolling
+		contentEl.querySelectorAll('table').forEach(function(table) {
+			if (table.parentElement && table.parentElement.classList.contains('aui-table-wrap')) return;
+			var wrap = document.createElement('div');
+			wrap.className = 'aui-table-wrap';
+			table.parentNode.insertBefore(wrap, table);
+			wrap.appendChild(table);
+		});
 
 		// Add copy buttons to pre blocks
 		contentEl.querySelectorAll('pre').forEach(function(pre) {
@@ -1199,14 +1598,41 @@ html, body {
 			pre.appendChild(btn);
 		});
 
-		// External links open in new tab
+		// External links open in new tab, anchor links smooth scroll, internal links navigate top window
 		contentEl.querySelectorAll('a').forEach(function(a) {
 			var href = a.getAttribute('href');
-			if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+			if (!href) return;
+			if (href.startsWith('http://') || href.startsWith('https://')) {
 				a.setAttribute('target', '_blank');
 				a.setAttribute('rel', 'noopener noreferrer');
+			} else if (href.startsWith('#')) {
+				a.addEventListener('click', function(e) {
+					var targetId = href.slice(1);
+					var targetEl = document.getElementById(targetId);
+					if (targetEl) {
+						e.preventDefault();
+						targetEl.scrollIntoView({ behavior: 'smooth' });
+						updateHash(href);
+						history.pushState(null, null, href);
+					}
+				});
+			} else if (href.startsWith('/')) {
+				if (window.self !== window.top) {
+					a.setAttribute('target', '_top');
+				}
 			}
 		});
+
+		// Scroll to hash if loaded with anchor
+		var initialHash = window.location.hash;
+		if (initialHash) {
+			var initialTarget = document.getElementById(initialHash.slice(1));
+			if (initialTarget) {
+				setTimeout(function() {
+					initialTarget.scrollIntoView({ behavior: 'smooth' });
+				}, 100);
+			}
+		}
 	}
 
 	// Listen for theme mutations from parent viewer frame
@@ -1228,8 +1654,10 @@ html, body {
 </script>
 </body>
 </html>`,
-		escapedID,
+		metaDescTag,
+		escapedTitle,
 		sharedCSS(),
+		headerHTML,
 		escapedScript,
 	)
 
@@ -2095,15 +2523,19 @@ func escapeURLPath(p string) string {
 	return strings.Join(segments, "/")
 }
 
-func renderBreadcrumbs(id string) string {
+func renderBreadcrumbs(id, title string) string {
 	parts := strings.Split(id, "/")
+	display := id
+	if title != "" {
+		display = title
+	}
 	if len(parts) <= 1 {
-		return fmt.Sprintf(`<span class="aui-header-doc-title" id="header-doc-label">%s</span>`, html.EscapeString(id))
+		return fmt.Sprintf(`<span class="aui-header-doc-title" id="header-doc-label">%s</span>`, html.EscapeString(display))
 	}
 	var sb strings.Builder
 	for i, p := range parts {
 		if i == len(parts)-1 {
-			sb.WriteString(fmt.Sprintf(`<span class="aui-header-doc-title" id="header-doc-label">%s</span>`, html.EscapeString(p)))
+			sb.WriteString(fmt.Sprintf(`<span class="aui-header-doc-title" id="header-doc-label">%s</span>`, html.EscapeString(display)))
 		} else {
 			sb.WriteString(fmt.Sprintf(`<span class="aui-breadcrumb-dir">%s</span><span class="aui-header-sep">/</span>`, html.EscapeString(p)))
 		}
