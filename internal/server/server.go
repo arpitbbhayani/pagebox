@@ -22,6 +22,8 @@ import (
 	"github.com/arpitbhayani/pagebox/internal/storage"
 )
 
+const mainIconURL = "https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4"
+
 //go:embed assets/marked.min.js
 var markedJS []byte
 
@@ -50,8 +52,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Path == "/favicon.ico" {
-		w.Header().Set("Content-Type", "image/svg+xml")
-		w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#111113"/><text x="16" y="22" font-size="18" font-family="monospace" font-weight="bold" fill="#e5000f" text-anchor="middle">/p</text></svg>`))
+		http.Redirect(w, r, mainIconURL, http.StatusFound)
 		return
 	}
 
@@ -120,6 +121,8 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>/pagebox</title>
+<link rel="icon" type="image/png" href="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4">
+<link rel="apple-touch-icon" href="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Lora:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
@@ -144,6 +147,7 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		<div class="aui-nav-inner">
 			<div class="aui-brand-group">
 				<a href="/" class="aui-brand">
+					<img src="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4" alt="pagebox" class="aui-brand-icon">
 					<span class="aui-brand-symbol">/</span>pagebox
 				</a>
 			</div>
@@ -579,6 +583,8 @@ func (s *Server) serveDocumentViewer(w http.ResponseWriter, r *http.Request, id 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%s · /pagebox</title>
+<link rel="icon" type="image/png" href="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4">
+<link rel="apple-touch-icon" href="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -747,6 +753,7 @@ html, body {
 		<div class="aui-header-left">
 			<a href="/" class="aui-back-link" title="Return to Index">
 				<span class="aui-back-arrow">←</span>
+				<img src="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4" alt="pagebox" class="aui-brand-icon">
 				<span class="aui-header-brand-name">/pagebox</span>
 			</a>
 			<span class="aui-header-sep">/</span>
@@ -961,6 +968,8 @@ func (s *Server) serveMarkdownRenderer(w http.ResponseWriter, r *http.Request, i
 <meta name="viewport" content="width=device-width, initial-scale=1">
 %s
 <title>%s · /pagebox</title>
+<link rel="icon" type="image/png" href="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4">
+<link rel="apple-touch-icon" href="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Lora:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
@@ -1560,6 +1569,8 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request, id string
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Not Found · /pagebox</title>
+<link rel="icon" type="image/png" href="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4">
+<link rel="apple-touch-icon" href="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1600,6 +1611,8 @@ func (s *Server) serveError(w http.ResponseWriter, r *http.Request, id string, m
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fetch Error · /pagebox</title>
+<link rel="icon" type="image/png" href="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4">
+<link rel="apple-touch-icon" href="https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1846,7 +1859,17 @@ body {
 	letter-spacing: -0.02em;
 	display: flex;
 	align-items: center;
-	gap: 2px;
+	gap: 6px;
+}
+
+.aui-brand-icon {
+	width: 20px;
+	height: 20px;
+	border-radius: 4px;
+	object-fit: contain;
+	display: inline-block;
+	vertical-align: middle;
+	flex-shrink: 0;
 }
 
 .aui-brand-symbol {

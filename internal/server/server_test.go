@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -530,6 +531,51 @@ Why the future of software engineering belongs to code understanding.
 	}
 	if strings.Contains(renderBody, "aui-toc-container") || strings.Contains(renderBody, "On this page") {
 		t.Errorf("expected aui-toc-container ('On this page') to be removed from render template")
+	}
+}
+
+func TestFaviconAndMainIcon(t *testing.T) {
+	srv, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	expectedIconURL := "https://github.com/user-attachments/assets/3ed0b526-191c-40be-ba63-7ce6a32188f4"
+
+	// 1. Test /favicon.ico redirects to the custom icon URL
+	req := httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 Found for /favicon.ico, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != expectedIconURL {
+		t.Errorf("expected Location header %s, got %s", expectedIconURL, loc)
+	}
+
+	// 2. Test Index page contains favicon link and main icon image
+	idxReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	idxRec := httptest.NewRecorder()
+	srv.ServeHTTP(idxRec, idxReq)
+
+	idxBody := idxRec.Body.String()
+	if !strings.Contains(idxBody, fmt.Sprintf(`rel="icon" type="image/png" href="%s"`, expectedIconURL)) {
+		t.Errorf("expected index page to contain favicon link")
+	}
+	if !strings.Contains(idxBody, fmt.Sprintf(`<img src="%s" alt="pagebox" class="aui-brand-icon">`, expectedIconURL)) {
+		t.Errorf("expected index page to contain main brand icon")
+	}
+
+	// 3. Test document viewer contains favicon link and header brand icon
+	viewReq := httptest.NewRequest(http.MethodGet, "/sample-doc", nil)
+	viewRec := httptest.NewRecorder()
+	srv.ServeHTTP(viewRec, viewReq)
+
+	viewBody := viewRec.Body.String()
+	if !strings.Contains(viewBody, fmt.Sprintf(`rel="icon" type="image/png" href="%s"`, expectedIconURL)) {
+		t.Errorf("expected viewer page to contain favicon link")
+	}
+	if !strings.Contains(viewBody, fmt.Sprintf(`<img src="%s" alt="pagebox" class="aui-brand-icon">`, expectedIconURL)) {
+		t.Errorf("expected viewer page to contain header brand icon")
 	}
 }
 
