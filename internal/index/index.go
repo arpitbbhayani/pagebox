@@ -37,6 +37,25 @@ type Entry struct {
 	LastPolledAt time.Time     `json:"last_polled_at"`
 }
 
+// Timestamp returns the most recent activity timestamp for the entry.
+// It checks LastSyncedAt first, then LastPolledAt, and falls back to
+// local file modification time if docsDir is provided and the file exists.
+func (e Entry) Timestamp(docsDir string) time.Time {
+	if !e.LastSyncedAt.IsZero() {
+		return e.LastSyncedAt
+	}
+	if !e.LastPolledAt.IsZero() {
+		return e.LastPolledAt
+	}
+	if docsDir != "" && e.Key != "" {
+		p := filepath.Join(docsDir, filepath.FromSlash(e.Key))
+		if fi, err := os.Stat(p); err == nil {
+			return fi.ModTime()
+		}
+	}
+	return time.Time{}
+}
+
 // Store manages the index file.
 type Store struct {
 	mu      sync.RWMutex

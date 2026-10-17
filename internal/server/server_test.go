@@ -535,6 +535,9 @@ Why the future of software engineering belongs to code understanding.
 	if !strings.Contains(renderBody, "aui-doc-layout") {
 		t.Errorf("expected aui-doc-layout in render template")
 	}
+	if !strings.Contains(renderBody, "max-width: 1080px;") {
+		t.Errorf("expected max-width: 1080px in render template")
+	}
 	if strings.Contains(renderBody, "aui-toc-container") || strings.Contains(renderBody, "On this page") {
 		t.Errorf("expected aui-toc-container ('On this page') to be removed from render template")
 	}
@@ -582,6 +585,141 @@ func TestFaviconAndMainIcon(t *testing.T) {
 	}
 	if !strings.Contains(viewBody, fmt.Sprintf(`<img src="%s" alt="pagebox" class="aui-brand-icon">`, expectedIconURL)) {
 		t.Errorf("expected viewer page to contain header brand icon")
+	}
+}
+
+func TestFileOrderingMostRecentFirst(t *testing.T) {
+	srv, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	now := time.Now()
+	// Add older doc ("alpha-older" is alphabetically first, but older)
+	_ = srv.idx.Update("alpha-older", func(e *index.Entry) {
+		e.ID = "alpha-older"
+		e.Key = "alpha-older.html"
+		e.State = index.StateCached
+		e.LastSyncedAt = now.Add(-2 * time.Hour)
+	})
+	// Add newer doc ("omega-newer" is alphabetically last, but newer)
+	_ = srv.idx.Update("omega-newer", func(e *index.Entry) {
+		e.ID = "omega-newer"
+		e.Key = "omega-newer.html"
+		e.State = index.StateCached
+		e.LastSyncedAt = now
+	})
+	defer func() {
+		_ = srv.idx.Delete("alpha-older")
+		_ = srv.idx.Delete("omega-newer")
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	newerIdx := strings.Index(body, "omega-newer")
+	olderIdx := strings.Index(body, "alpha-older")
+
+	if newerIdx == -1 || olderIdx == -1 {
+		t.Fatalf("expected both omega-newer and alpha-older in HTML table")
+	}
+	if newerIdx > olderIdx {
+		t.Errorf("expected omega-newer (more recent) to appear before alpha-older in table, but got newer at %d, older at %d", newerIdx, olderIdx)
+	}
+}
+
+func TestEmptyKeyHealingAndNoDirectoryListing(t *testing.T) {
+	srv, tmpDir, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Create test html file
+	docPath := filepath.Join(tmpDir, "vm-sandbox-filesystem-explained.html")
+	if err := os.WriteFile(docPath, []byte("<!DOCTYPE html><html><body><h1>Fast Filesystems for VMs</h1></body></html>"), 0644); err != nil {
+		t.Fatalf("failed to create doc: %v", err)
+	}
+
+	// Add entry with empty Key (simulating the state where key was blank)
+	docID := "vm-sandbox-filesystem-explained"
+	_ = srv.idx.Update(docID, func(e *index.Entry) {
+		e.ID = docID
+		e.Key = ""
+		e.State = ""
+		e.Size = 87850
+	})
+	defer func() {
+		_ = srv.idx.Delete(docID)
+	}()
+
+	// 1. Request with trailing slash: /vm-sandbox-filesystem-explained/
+	req := httptest.NewRequest(http.MethodGet, "/vm-sandbox-filesystem-explained/", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	// Should serve the viewer, NOT a directory listing
+	if !strings.Contains(body, "aui-viewer") {
+		t.Errorf("expected response to be the document viewer UI")
+	}
+	if !strings.Contains(body, `src="/vm-sandbox-filesystem-explained?raw=1"`) {
+		t.Errorf("expected iframe to load /vm-sandbox-filesystem-explained?raw=1, got: %s", body)
+	}
+	// Must NOT contain standard directory listing markers
+	if strings.Contains(body, "<pre><a href=") {
+		t.Errorf("expected response to NOT be a Go directory listing")
+	}
+
+	// 2. Request raw content: /vm-sandbox-filesystem-explained?raw=1
+	rawReq := httptest.NewRequest(http.MethodGet, "/vm-sandbox-filesystem-explained?raw=1", nil)
+	rawRec := httptest.NewRecorder()
+	srv.ServeHTTP(rawRec, rawReq)
+
+	if rawRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for raw doc, got %d", rawRec.Code)
+	}
+	rawBody := rawRec.Body.String()
+	if !strings.Contains(rawBody, "Fast Filesystems for VMs") {
+		t.Errorf("expected raw body to contain document content, got: %s", rawBody)
+	}
+
+	// 3. Verify entry.Key is healed in the index
+	entry, ok := srv.idx.Get(docID)
+	if !ok {
+		t.Fatalf("expected entry to exist in index")
+	}
+	if entry.Key != "vm-sandbox-filesystem-explained.html" {
+		t.Errorf("expected entry.Key to be healed to 'vm-sandbox-filesystem-explained.html', got '%s'", entry.Key)
+	}
+}
+
+func TestThemeBridgeAndLocalStorageSync(t *testing.T) {
+	srv, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/sample-doc", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "pagebox-theme-bridge") {
+		t.Errorf("expected viewer to contain pagebox-theme-bridge style injector")
+	}
+	if !strings.Contains(body, "localStorage.setItem('theme'") {
+		t.Errorf("expected viewer to sync theme key in localStorage")
+	}
+	if !strings.Contains(body, "onload=\"onFrameLoaded(this)\"") {
+		t.Errorf("expected iframe to have onload attribute calling onFrameLoaded")
 	}
 }
 

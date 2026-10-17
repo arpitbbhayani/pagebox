@@ -90,6 +90,11 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 
 	entries := s.idx.List()
 	sort.Slice(entries, func(i, j int) bool {
+		tI := entries[i].Timestamp(s.cfg.DocsDir)
+		tJ := entries[j].Timestamp(s.cfg.DocsDir)
+		if !tI.Equal(tJ) {
+			return tI.After(tJ)
+		}
 		return entries[i].ID < entries[j].ID
 	})
 
@@ -111,7 +116,7 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tree := buildFileTree(entries)
+	tree := buildFileTree(entries, s.cfg.DocsDir)
 	var rows strings.Builder
 	renderTreeRows(tree, &rows)
 
@@ -128,12 +133,18 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Lora:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
 <script>
 (function() {
-	var saved = localStorage.getItem('aui-theme');
-	if (saved) {
-		document.documentElement.setAttribute('data-theme', saved);
-	} else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-		document.documentElement.setAttribute('data-theme', 'dark');
+	var saved = localStorage.getItem('aui-theme') || localStorage.getItem('theme');
+	var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+	document.documentElement.setAttribute('data-theme', theme);
+	if (theme === 'dark') {
+		document.documentElement.classList.add('dark');
+	} else {
+		document.documentElement.classList.remove('dark');
 	}
+	try {
+		localStorage.setItem('aui-theme', theme);
+		localStorage.setItem('theme', theme);
+	} catch(_) {}
 })();
 </script>
 <style>
@@ -245,10 +256,20 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	if (themeBtn) {
 		themeBtn.addEventListener('click', function() {
 			var current = document.documentElement.getAttribute('data-theme') ||
+				localStorage.getItem('aui-theme') ||
+				localStorage.getItem('theme') ||
 				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 			var next = current === 'dark' ? 'light' : 'dark';
 			document.documentElement.setAttribute('data-theme', next);
-			localStorage.setItem('aui-theme', next);
+			if (next === 'dark') {
+				document.documentElement.classList.add('dark');
+			} else {
+				document.documentElement.classList.remove('dark');
+			}
+			try {
+				localStorage.setItem('aui-theme', next);
+				localStorage.setItem('theme', next);
+			} catch (_) {}
 		});
 	}
 
@@ -504,6 +525,46 @@ func (s *Server) serveDocument(w http.ResponseWriter, r *http.Request, id string
 		}
 	} else {
 		localPath = filepath.Join(s.cfg.DocsDir, filepath.FromSlash(entry.Key))
+		fi, statErr := os.Stat(localPath)
+		// If entry.Key is empty or localPath is a directory or missing, resolve against candidates
+		if entry.Key == "" || statErr != nil || fi.IsDir() {
+			candidates := []string{
+				id + ".html",
+				id + ".md",
+				id + ".markdown",
+				id,
+			}
+			found := false
+			for _, cand := range candidates {
+				p := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(cand))
+				if info, err := os.Stat(p); err == nil && !info.IsDir() {
+					localPath = p
+					entry.Key = cand
+					if entry.State == "" {
+						entry.State = index.StateCached
+					}
+					// Heal the index entry
+					_ = s.idx.Update(id, func(e *index.Entry) {
+						e.ID = id
+						e.Key = cand
+						if e.State == "" {
+							e.State = index.StateCached
+						}
+						e.Size = info.Size()
+						if e.LastSyncedAt.IsZero() {
+							e.LastSyncedAt = info.ModTime()
+						}
+					})
+					found = true
+					break
+				}
+			}
+			if !found && entry.State != index.StatePlaceholder && entry.State != index.StateStale {
+				s.serveNotFound(w, r, id)
+				return
+			}
+		}
+
 		// Lazy fetch if placeholder or stale
 		if entry.State == index.StatePlaceholder || entry.State == index.StateStale {
 			err := s.fetch(id, entry, localPath)
@@ -542,6 +603,10 @@ func (s *Server) serveDocument(w http.ResponseWriter, r *http.Request, id string
 
 	// If non-HTML, non-Markdown file is requested directly (e.g. image or pdf)
 	if !isHTML && !isMarkdown {
+		if fi, err := os.Stat(localPath); err == nil && fi.IsDir() {
+			s.serveNotFound(w, r, id)
+			return
+		}
 		http.ServeFile(w, r, localPath)
 		return
 	}
@@ -595,12 +660,18 @@ if (window.self !== window.top) {
 }
 
 (function() {
-	var saved = localStorage.getItem('aui-theme');
-	if (saved) {
-		document.documentElement.setAttribute('data-theme', saved);
-	} else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-		document.documentElement.setAttribute('data-theme', 'dark');
+	var saved = localStorage.getItem('aui-theme') || localStorage.getItem('theme');
+	var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+	document.documentElement.setAttribute('data-theme', theme);
+	if (theme === 'dark') {
+		document.documentElement.classList.add('dark');
+	} else {
+		document.documentElement.classList.remove('dark');
 	}
+	try {
+		localStorage.setItem('aui-theme', theme);
+		localStorage.setItem('theme', theme);
+	} catch(_) {}
 })();
 </script>
 <style>
@@ -790,7 +861,7 @@ html, body {
 			<span class="aui-loader-spinner"></span>
 			<span>Streaming document...</span>
 		</div>
-		<iframe id="doc-frame" class="aui-doc-iframe" src="%s" title="%s"></iframe>
+		<iframe id="doc-frame" class="aui-doc-iframe" src="%s" title="%s" onload="onFrameLoaded(this)"></iframe>
 	</div>
 </div>
 
@@ -801,40 +872,120 @@ html, body {
 
 	function getTheme() {
 		return document.documentElement.getAttribute('data-theme') ||
+			localStorage.getItem('aui-theme') ||
+			localStorage.getItem('theme') ||
 			(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 	}
 
 	function applyThemeToFrame(theme) {
+		if (!frame) return;
 		try {
-			if (frame && frame.contentDocument && frame.contentDocument.documentElement) {
-				frame.contentDocument.documentElement.setAttribute('data-theme', theme);
+			if (frame.contentDocument && frame.contentDocument.documentElement) {
+				var docEl = frame.contentDocument.documentElement;
+				docEl.setAttribute('data-theme', theme);
+				if (theme === 'dark') {
+					docEl.classList.add('dark');
+				} else {
+					docEl.classList.remove('dark');
+				}
+				docEl.style.colorScheme = theme;
+
+				// Bridge CSS variables so both Pagebox tokens and document tokens match
+				var bridge = frame.contentDocument.getElementById('pagebox-theme-bridge');
+				if (!bridge && frame.contentDocument.head) {
+					bridge = frame.contentDocument.createElement('style');
+					bridge.id = 'pagebox-theme-bridge';
+					frame.contentDocument.head.appendChild(bridge);
+				}
+				if (bridge) {
+					if (theme === 'dark') {
+						bridge.textContent = ':root, [data-theme="dark"], .dark {' +
+							'--aui-bg: #111113; --aui-bg-primary: #111113;' +
+							'--aui-bg-card: #18181b; --aui-bg-secondary: #18181b;' +
+							'--aui-bg-subtle: #141416; --aui-bg-tertiary: #222226;' +
+							'--aui-bg-hover: #222227;' +
+							'--aui-border: #27272c; --aui-border-color: #27272c;' +
+							'--aui-border-subtle: #1f1f23; --aui-border-light: #1f1f24;' +
+							'--aui-text: #d6d6dc; --aui-text-primary: #d6d6dc;' +
+							'--aui-text-muted: #8e8d98; --aui-text-faint: #5a5963;' +
+							'--aui-crimson: #e5000f; --aui-primary: #e5000f;' +
+							'color-scheme: dark;' +
+						'}';
+					} else {
+						bridge.textContent = ':root, [data-theme="light"] {' +
+							'--aui-bg: #f9f8f5; --aui-bg-primary: #faf9f5;' +
+							'--aui-bg-card: #ffffff; --aui-bg-secondary: #ffffff;' +
+							'--aui-bg-subtle: #f2f0eb; --aui-bg-tertiary: #f2efe6;' +
+							'--aui-bg-hover: #eae7df;' +
+							'--aui-border: #dfded9; --aui-border-color: #e5e0d3;' +
+							'--aui-border-subtle: #e8e6e0; --aui-border-light: #eee9dd;' +
+							'--aui-text: #2b2a30; --aui-text-primary: #2d2c33;' +
+							'--aui-text-muted: #6b6964; --aui-text-faint: #9c9a92;' +
+							'--aui-crimson: #e5000f; --aui-primary: #e5000f;' +
+							'color-scheme: light;' +
+						'}';
+					}
+				}
+			}
+			if (frame.contentWindow) {
+				try {
+					frame.contentWindow.localStorage.setItem('theme', theme);
+					frame.contentWindow.localStorage.setItem('aui-theme', theme);
+				} catch (_) {}
+				frame.contentWindow.postMessage({ type: 'theme', theme: theme }, '*');
 			}
 		} catch (e) {}
 	}
+
+	window.onFrameLoaded = function(f) {
+		var loader = document.getElementById('frame-loader');
+		if (loader) { loader.style.display = 'none'; }
+
+		var theme = getTheme();
+		applyThemeToFrame(theme);
+
+		try {
+			if (f && f.contentDocument && f.contentDocument.title) {
+				document.title = f.contentDocument.title + ' · /pagebox';
+			}
+		} catch (e) {}
+	};
+
+	// Polling check to apply theme during earliest DOM construction of the iframe
+	var checkInterval = setInterval(function() {
+		try {
+			if (frame && frame.contentDocument && frame.contentDocument.documentElement) {
+				var docEl = frame.contentDocument.documentElement;
+				var theme = getTheme();
+				if (docEl.getAttribute('data-theme') !== theme || (theme === 'dark' && !docEl.classList.contains('dark'))) {
+					applyThemeToFrame(theme);
+				}
+			}
+		} catch (e) {}
+	}, 10);
+	setTimeout(function() { clearInterval(checkInterval); }, 3000);
 
 	if (themeBtn) {
 		themeBtn.addEventListener('click', function() {
 			var current = getTheme();
 			var next = current === 'dark' ? 'light' : 'dark';
 			document.documentElement.setAttribute('data-theme', next);
-			localStorage.setItem('aui-theme', next);
+			if (next === 'dark') {
+				document.documentElement.classList.add('dark');
+			} else {
+				document.documentElement.classList.remove('dark');
+			}
+			try {
+				localStorage.setItem('aui-theme', next);
+				localStorage.setItem('theme', next);
+			} catch (_) {}
 			applyThemeToFrame(next);
 		});
 	}
 
 	if (frame) {
 		frame.addEventListener('load', function() {
-			var loader = document.getElementById('frame-loader');
-			if (loader) { loader.style.display = 'none'; }
-
-			var theme = getTheme();
-			applyThemeToFrame(theme);
-
-			try {
-				if (frame.contentDocument && frame.contentDocument.title) {
-					document.title = frame.contentDocument.title + ' · /pagebox';
-				}
-			} catch (e) {}
+			window.onFrameLoaded(frame);
 		});
 
 		// Forward initial hash to iframe if present
@@ -975,12 +1126,18 @@ func (s *Server) serveMarkdownRenderer(w http.ResponseWriter, r *http.Request, i
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Lora:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
 <script>
 (function() {
-	var saved = localStorage.getItem('aui-theme');
-	if (saved) {
-		document.documentElement.setAttribute('data-theme', saved);
-	} else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-		document.documentElement.setAttribute('data-theme', 'dark');
+	var saved = localStorage.getItem('aui-theme') || localStorage.getItem('theme');
+	var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+	document.documentElement.setAttribute('data-theme', theme);
+	if (theme === 'dark') {
+		document.documentElement.classList.add('dark');
+	} else {
+		document.documentElement.classList.remove('dark');
 	}
+	try {
+		localStorage.setItem('aui-theme', theme);
+		localStorage.setItem('theme', theme);
+	} catch(_) {}
 })();
 </script>
 <style>
@@ -1002,7 +1159,7 @@ html, body {
 }
 
 .aui-doc-layout {
-	max-width: 760px;
+	max-width: 1080px;
 	margin: 0 auto;
 	padding: 40px 24px 96px;
 	box-sizing: border-box;
@@ -1687,16 +1844,23 @@ func sharedCSS() string {
 	return `
 :root {
 	--aui-bg: #f9f8f5;
+	--aui-bg-primary: #f9f8f5;
 	--aui-bg-card: #ffffff;
+	--aui-bg-secondary: #ffffff;
 	--aui-bg-subtle: #f2f0eb;
+	--aui-bg-tertiary: #f2efe6;
 	--aui-bg-hover: #eae7df;
 	--aui-border: #dfded9;
+	--aui-border-color: #dfded9;
 	--aui-border-subtle: #e8e6e0;
+	--aui-border-light: #eee9dd;
 	--aui-text: #2b2a30;
+	--aui-text-primary: #2b2a30;
 	--aui-text-muted: #6b6964;
 	--aui-text-faint: #9c9a92;
 
 	--aui-crimson: #e5000f;
+	--aui-primary: #e5000f;
 	--aui-crimson-bg: rgba(229, 0, 15, 0.08);
 	--aui-crimson-border: rgba(229, 0, 15, 0.25);
 
@@ -1725,18 +1889,25 @@ func sharedCSS() string {
 	--aui-font-serif: 'Lora', Georgia, serif;
 }
 
-[data-theme="dark"] {
+[data-theme="dark"], .dark {
 	--aui-bg: #111113;
+	--aui-bg-primary: #111113;
 	--aui-bg-card: #18181b;
+	--aui-bg-secondary: #18181b;
 	--aui-bg-subtle: #141416;
+	--aui-bg-tertiary: #222226;
 	--aui-bg-hover: #222227;
 	--aui-border: #27272c;
+	--aui-border-color: #27272c;
 	--aui-border-subtle: #1f1f23;
+	--aui-border-light: #1f1f24;
 	--aui-text: #d6d6dc;
+	--aui-text-primary: #d6d6dc;
 	--aui-text-muted: #8e8d98;
 	--aui-text-faint: #5a5963;
 
 	--aui-crimson: #e60012;
+	--aui-primary: #e60012;
 	--aui-crimson-bg: rgba(230, 0, 18, 0.12);
 	--aui-crimson-border: rgba(230, 0, 18, 0.35);
 
@@ -2442,7 +2613,7 @@ func renderBreadcrumbs(id, title string) string {
 	return sb.String()
 }
 
-func buildFileTree(entries []index.Entry) *FileNode {
+func buildFileTree(entries []index.Entry, docsDir string) *FileNode {
 	root := &FileNode{IsDir: true, Depth: -1}
 
 	for i := range entries {
@@ -2496,7 +2667,7 @@ func buildFileTree(entries []index.Entry) *FileNode {
 	}
 
 	computeDocCounts(root)
-	sortTree(root)
+	sortTree(root, docsDir)
 	return root
 }
 
@@ -2512,16 +2683,31 @@ func computeDocCounts(node *FileNode) int {
 	return count
 }
 
-func sortTree(node *FileNode) {
+func sortTree(node *FileNode, docsDir string) {
 	sort.Slice(node.Children, func(i, j int) bool {
-		if node.Children[i].IsDir != node.Children[j].IsDir {
-			return node.Children[i].IsDir // folders first
+		a := node.Children[i]
+		b := node.Children[j]
+		if a.IsDir != b.IsDir {
+			return a.IsDir // folders first
 		}
-		return node.Children[i].Name < node.Children[j].Name
+		if a.IsDir && b.IsDir {
+			return a.Name < b.Name
+		}
+		var timeA, timeB time.Time
+		if a.Entry != nil {
+			timeA = a.Entry.Timestamp(docsDir)
+		}
+		if b.Entry != nil {
+			timeB = b.Entry.Timestamp(docsDir)
+		}
+		if !timeA.Equal(timeB) {
+			return timeA.After(timeB) // most recent first
+		}
+		return a.Name < b.Name
 	})
 	for _, ch := range node.Children {
 		if ch.IsDir {
-			sortTree(ch)
+			sortTree(ch, docsDir)
 		}
 	}
 }

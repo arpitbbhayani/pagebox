@@ -90,9 +90,14 @@ var addCmd = &cobra.Command{
 				added = append(added, rel)
 			} else {
 				// Already in index: check if modified locally
-				if entry.LocalSHA256 != hashHex || entry.State == index.StateNew || entry.State == index.StateDirty {
+				if entry.LocalSHA256 != hashHex || entry.State == index.StateNew || entry.State == index.StateDirty || entry.Key == "" || entry.State == "" {
 					_ = idx.Update(id, func(e *index.Entry) {
-						if e.State == index.StateCached {
+						if e.Key == "" {
+							e.Key = rel
+						}
+						if e.State == "" {
+							e.State = index.StateNew
+						} else if e.State == index.StateCached {
 							e.State = index.StateDirty
 						}
 						e.Size = size

@@ -222,3 +222,51 @@ func TestPageboxListEmpty(t *testing.T) {
 		t.Errorf("expected 'no documents found', got:\n%s", out)
 	}
 }
+
+func TestPageboxListOrdersMostRecentFirst(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	docsDir := filepath.Join(tmpHome, "pagebox")
+	_ = os.MkdirAll(docsDir, 0755)
+
+	cfg := pbconfig.DefaultConfig()
+	cfg.DocsDir = docsDir
+	_ = pbconfig.Save(cfg)
+
+	idx, err := index.NewStore()
+	if err != nil {
+		t.Fatalf("failed to open index: %v", err)
+	}
+
+	now := time.Now()
+	_ = idx.Update("alpha-older", func(e *index.Entry) {
+		e.ID = "alpha-older"
+		e.Key = "alpha-older.md"
+		e.State = index.StateCached
+		e.Size = 100
+		e.LastSyncedAt = now.Add(-3 * time.Hour)
+	})
+	_ = idx.Update("omega-newer", func(e *index.Entry) {
+		e.ID = "omega-newer"
+		e.Key = "omega-newer.md"
+		e.State = index.StateCached
+		e.Size = 200
+		e.LastSyncedAt = now
+	})
+
+	out := captureStdout(func() {
+		listCmd.SetArgs([]string{})
+		_ = listCmd.Execute()
+	})
+
+	newerIdx := strings.Index(out, "omega-newer")
+	olderIdx := strings.Index(out, "alpha-older")
+
+	if newerIdx == -1 || olderIdx == -1 {
+		t.Fatalf("expected both omega-newer and alpha-older in output, got:\n%s", out)
+	}
+	if newerIdx > olderIdx {
+		t.Errorf("expected omega-newer to appear before alpha-older in list, but got newer at %d, older at %d", newerIdx, olderIdx)
+	}
+}

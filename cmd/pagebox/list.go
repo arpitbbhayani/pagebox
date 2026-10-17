@@ -59,6 +59,11 @@ var listCmd = &cobra.Command{
 		}
 
 		sort.Slice(entries, func(i, j int) bool {
+			tI := entries[i].Timestamp(cfg.DocsDir)
+			tJ := entries[j].Timestamp(cfg.DocsDir)
+			if !tI.Equal(tJ) {
+				return tI.After(tJ)
+			}
 			return entries[i].ID < entries[j].ID
 		})
 
