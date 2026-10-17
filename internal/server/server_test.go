@@ -245,6 +245,12 @@ func TestNestedFilesAndFoldersUI(t *testing.T) {
 	if !strings.Contains(body, `data-folder-path="docs/api"`) {
 		t.Errorf("expected data-folder-path='docs/api'")
 	}
+	if !strings.Contains(body, "aui-file-svg") {
+		t.Errorf("expected file SVG icons")
+	}
+	if strings.Contains(body, "aui-doc-glyph") {
+		t.Errorf("did not expect aui-doc-glyph right arrow glyph")
+	}
 	if !strings.Contains(body, "setup") || !strings.Contains(body, "v1") {
 		t.Errorf("expected nested documents setup and v1 in table")
 	}

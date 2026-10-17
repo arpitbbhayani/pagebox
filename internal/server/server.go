@@ -2169,19 +2169,18 @@ body {
 	letter-spacing: -0.01em;
 }
 
-.aui-doc-glyph {
-	color: var(--aui-crimson);
-	font-family: var(--aui-font-mono);
-	font-size: 13px;
-	transition: transform 0.15s ease;
+.aui-file-svg {
+	color: var(--aui-text-muted);
+	flex-shrink: 0;
+	transition: color 0.15s ease;
 }
 
 .aui-doc-link:hover {
 	color: var(--aui-crimson);
 }
 
-.aui-doc-link:hover .aui-doc-glyph {
-	transform: translateX(2px);
+.aui-doc-link:hover .aui-file-svg {
+	color: var(--aui-crimson);
 }
 
 .aui-td-size, .aui-td-time {
@@ -2582,7 +2581,7 @@ func renderTreeRows(node *FileNode, sb *strings.Builder) {
 		<tr class="aui-tr aui-tr-file" data-id="%s" data-name="%s" data-state="%s" data-parent-folder="%s" data-depth="%d">
 			<td class="aui-td-doc" style="padding-left: %dpx;">
 				<a href="%s" class="aui-doc-link">
-					<span class="aui-doc-glyph">›</span>
+					<svg class="aui-file-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
 					<span class="aui-doc-name">%s</span>
 				</a>
 			</td>
