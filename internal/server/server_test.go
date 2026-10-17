@@ -518,7 +518,7 @@ Why the future of software engineering belongs to code understanding.
 		t.Errorf("expected raw-markdown script block to have frontmatter stripped")
 	}
 
-	// Must include table-wrap logic, heading anchor logic, layout, and TOC
+	// Must include table-wrap logic, heading anchor logic, layout, and TOC removed
 	if !strings.Contains(renderBody, "aui-table-wrap") {
 		t.Errorf("expected aui-table-wrap in render script")
 	}
@@ -528,8 +528,8 @@ Why the future of software engineering belongs to code understanding.
 	if !strings.Contains(renderBody, "aui-doc-layout") {
 		t.Errorf("expected aui-doc-layout in render template")
 	}
-	if !strings.Contains(renderBody, "aui-toc-container") {
-		t.Errorf("expected aui-toc-container in render template")
+	if strings.Contains(renderBody, "aui-toc-container") || strings.Contains(renderBody, "On this page") {
+		t.Errorf("expected aui-toc-container ('On this page') to be removed from render template")
 	}
 }
 

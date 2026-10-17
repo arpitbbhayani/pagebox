@@ -993,19 +993,14 @@ html, body {
 }
 
 .aui-doc-layout {
-	display: flex;
-	justify-content: center;
-	max-width: 1140px;
+	max-width: 760px;
 	margin: 0 auto;
 	padding: 40px 24px 96px;
 	box-sizing: border-box;
-	gap: 48px;
 }
 
 .aui-prose-container {
-	flex: 1;
-	min-width: 0;
-	max-width: 760px;
+	width: 100%%;
 }
 
 .aui-prose {
@@ -1337,77 +1332,9 @@ html, body {
 	margin: 20px 0;
 }
 
-/* Table of Contents */
-.aui-toc-container {
-	width: 240px;
-	flex-shrink: 0;
-}
-
-.aui-toc-sticky {
-	position: sticky;
-	top: 36px;
-	max-height: calc(100vh - 72px);
-	overflow-y: auto;
-	padding-left: 16px;
-	border-left: 1px solid var(--aui-border);
-}
-
-.aui-toc-title {
-	font-family: var(--aui-font-mono);
-	font-size: 11.5px;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
-	color: var(--aui-text-muted);
-	margin-bottom: 12px;
-}
-
-.aui-toc-nav {
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-}
-
-.aui-toc-link {
-	font-size: 12.5px;
-	line-height: 1.4;
-	color: var(--aui-text-muted);
-	text-decoration: none !important;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	border-radius: 3px;
-	padding: 3px 6px;
-	transition: all 0.15s ease;
-}
-
-.aui-toc-link:hover {
-	color: var(--aui-text);
-	background: var(--aui-bg-subtle);
-}
-
-.aui-toc-link.active {
-	color: var(--aui-crimson);
-	font-weight: 600;
-}
-
-.aui-toc-link.aui-toc-h3 {
-	padding-left: 14px;
-	font-size: 12px;
-	color: var(--aui-text-faint);
-}
-
-.aui-toc-link.aui-toc-h3:hover {
-	color: var(--aui-text);
-}
-
-@media (max-width: 960px) {
-	.aui-toc-container {
-		display: none !important;
-	}
+@media (max-width: 768px) {
 	.aui-doc-layout {
 		padding: 24px 16px 64px;
-		gap: 0;
 	}
 }
 </style>
@@ -1423,12 +1350,6 @@ html, body {
 			</div>
 		</article>
 	</div>
-	<aside class="aui-toc-container" id="toc-container" style="display: none;">
-		<div class="aui-toc-sticky">
-			<div class="aui-toc-title">On this page</div>
-			<nav class="aui-toc-nav" id="toc-nav"></nav>
-		</div>
-	</aside>
 </div>
 
 <script type="text/markdown" id="raw-markdown">%s</script>
@@ -1521,50 +1442,6 @@ html, body {
 			}
 		});
 
-		// Build Table of Contents from h2 and h3 headings
-		var tocNav = document.getElementById('toc-nav');
-		var tocContainer = document.getElementById('toc-container');
-		var tocHeadings = contentEl.querySelectorAll('h2, h3');
-		if (tocHeadings.length >= 2 && tocNav && tocContainer) {
-			tocNav.innerHTML = '';
-			tocHeadings.forEach(function(h) {
-				if (!h.id) return;
-				var link = document.createElement('a');
-				link.href = '#' + h.id;
-				link.className = 'aui-toc-link aui-toc-' + h.tagName.toLowerCase();
-				var clone = h.cloneNode(true);
-				var anchor = clone.querySelector('.aui-heading-anchor');
-				if (anchor) anchor.remove();
-				link.textContent = clone.textContent.trim();
-				link.title = link.textContent;
-				link.addEventListener('click', function(e) {
-					e.preventDefault();
-					h.scrollIntoView({ behavior: 'smooth' });
-					updateHash('#' + h.id);
-					history.pushState(null, null, '#' + h.id);
-				});
-				tocNav.appendChild(link);
-			});
-			tocContainer.style.display = 'block';
-
-			// IntersectionObserver to highlight active TOC heading on scroll
-			if ('IntersectionObserver' in window) {
-				var tocObserver = new IntersectionObserver(function(entries) {
-					entries.forEach(function(entry) {
-						if (entry.isIntersecting) {
-							var id = entry.target.id;
-							var activeLink = tocNav.querySelector('a[href="#' + id + '"]');
-							if (activeLink) {
-								tocNav.querySelectorAll('.aui-toc-link').forEach(function(l) { l.classList.remove('active'); });
-								activeLink.classList.add('active');
-							}
-						}
-					});
-				}, { rootMargin: '0px 0px -70%% 0px' });
-
-				tocHeadings.forEach(function(h) { tocObserver.observe(h); });
-			}
-		}
 
 		// Wrap tables for responsive horizontal scrolling
 		contentEl.querySelectorAll('table').forEach(function(table) {
