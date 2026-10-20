@@ -44,10 +44,12 @@ publish:
 	@echo "==> Preparing release v$(CLEAN_VERSION) (previous: $$(cat VERSION 2>/dev/null || echo 'none'))"
 	@echo "$(CLEAN_VERSION)" > VERSION
 	@echo "$(CLEAN_VERSION)" > cmd/pagebox/VERSION
+	@sed -i -E 's/return "[0-9]+\.[0-9]+\.[0-9]+"/return "$(CLEAN_VERSION)"/' cmd/pagebox/update.go
+	@sed -i -E 's/VERSION="[0-9]+\.[0-9]+\.[0-9]+"/VERSION="$(CLEAN_VERSION)"/' install.sh
 	@echo "==> Building dist binaries and checksums..."
 	@./build.sh
 	@echo "==> Updating git repository..."
-	@git add VERSION cmd/pagebox/VERSION
+	@git add VERSION cmd/pagebox/VERSION cmd/pagebox/update.go install.sh
 	@git commit -m "Release v$(CLEAN_VERSION)" || true
 	@git tag -fa "v$(CLEAN_VERSION)" -m "Release v$(CLEAN_VERSION)"
 	@echo ""
