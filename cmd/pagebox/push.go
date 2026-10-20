@@ -50,7 +50,7 @@ var pushCmd = &cobra.Command{
 			pushDirty(cfg, store, idx)
 		}
 
-		// Update index.html locally and push to remote storage
+		// Update index.html and robots.txt locally and push to remote storage
 		updateAndPushIndexHTML(cfg, store, idx)
 	},
 }
@@ -171,23 +171,27 @@ func updateAndPushIndexHTML(cfg pbconfig.Config, store storage.Storage, idx *ind
 		ui.PrintWarn("failed to update index.html", err.Error(), nil)
 		return
 	}
+	_ = server.WriteRobotsFile(cfg)
 
 	indexPath := filepath.Join(cfg.DocsDir, "index.html")
-	f, err := os.Open(indexPath)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	stat, err := f.Stat()
-	if err != nil {
-		return
+	if f, err := os.Open(indexPath); err == nil {
+		defer f.Close()
+		if stat, err := f.Stat(); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_, _ = store.Put(ctx, "index.html", f, stat.Size(), "")
+		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	_, _ = store.Put(ctx, "index.html", f, stat.Size(), "")
+	robotsPath := filepath.Join(cfg.DocsDir, "robots.txt")
+	if f, err := os.Open(robotsPath); err == nil {
+		defer f.Close()
+		if stat, err := f.Stat(); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_, _ = store.Put(ctx, "robots.txt", f, stat.Size(), "")
+		}
+	}
 }
 
 

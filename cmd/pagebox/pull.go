@@ -51,6 +51,7 @@ var pullCmd = &cobra.Command{
 		if err := server.WriteIndexFile(cfg, idx); err != nil {
 			ui.PrintWarn("failed to update index.html", err.Error(), nil)
 		}
+		_ = server.WriteRobotsFile(cfg)
 	},
 }
 

@@ -80,8 +80,9 @@ var serveCmd = &cobra.Command{
 			}
 		}()
 
-		// Ensure index.html exists in DocsDir
+		// Ensure index.html and robots.txt exist in DocsDir
 		_ = server.WriteIndexFile(cfg, idx)
+		_ = server.WriteRobotsFile(cfg)
 
 		if !noUpdate {
 			go autoUpdate(version)

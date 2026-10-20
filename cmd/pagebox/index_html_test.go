@@ -77,13 +77,29 @@ func TestAddAndPushUpdatesIndexHTML(t *testing.T) {
 
 	// Verify index.html was pushed to remote storage
 	foundPushedIndexHTML := false
+	foundPushedRobotsTxt := false
 	for _, key := range mock.putKeys {
 		if key == "index.html" {
 			foundPushedIndexHTML = true
-			break
+		}
+		if key == "robots.txt" {
+			foundPushedRobotsTxt = true
 		}
 	}
 	if !foundPushedIndexHTML {
 		t.Errorf("expected index.html to be pushed to remote storage on push, got keys: %v", mock.putKeys)
+	}
+	if !foundPushedRobotsTxt {
+		t.Errorf("expected robots.txt to be pushed to remote storage on push, got keys: %v", mock.putKeys)
+	}
+
+	// Verify robots.txt content
+	robotsPath := filepath.Join(docsDir, "robots.txt")
+	robotsContent, err := os.ReadFile(robotsPath)
+	if err != nil {
+		t.Fatalf("failed to read robots.txt: %v", err)
+	}
+	if !strings.Contains(string(robotsContent), "User-agent: *") || !strings.Contains(string(robotsContent), "Disallow: /") {
+		t.Errorf("expected robots.txt to disallow all crawlers, got:\n%s", string(robotsContent))
 	}
 }

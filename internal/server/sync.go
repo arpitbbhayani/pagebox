@@ -105,7 +105,7 @@ func (s *SyncLoop) handleFSEvent(event fsnotify.Event) {
 		return
 	}
 	slashRel := filepath.ToSlash(rel)
-	if slashRel == "index.html" || strings.HasSuffix(slashRel, "/index.html") || strings.HasPrefix(slashRel, ".") || strings.Contains(slashRel, "/.") {
+	if slashRel == "index.html" || strings.HasSuffix(slashRel, "/index.html") || slashRel == "robots.txt" || strings.HasSuffix(slashRel, "/robots.txt") || strings.HasPrefix(slashRel, ".") || strings.Contains(slashRel, "/.") {
 		return
 	}
 	
@@ -221,13 +221,21 @@ func (s *SyncLoop) push(ctx context.Context, id string) {
 		e.RemoteETag = newEtag
 		e.LastSyncedAt = time.Now()
 	})
-	// Push index.html to remote storage if configured
+	// Push index.html and robots.txt to remote storage if configured
 	if s.store != nil {
 		_ = WriteIndexFile(s.cfg, s.idx)
+		_ = WriteRobotsFile(s.cfg)
 		indexPath := filepath.Join(s.cfg.DocsDir, "index.html")
 		if info, err := os.Stat(indexPath); err == nil {
 			if f, err := os.Open(indexPath); err == nil {
 				_, _ = s.store.Put(ctx, "index.html", f, info.Size(), "")
+				_ = f.Close()
+			}
+		}
+		robotsPath := filepath.Join(s.cfg.DocsDir, "robots.txt")
+		if info, err := os.Stat(robotsPath); err == nil {
+			if f, err := os.Open(robotsPath); err == nil {
+				_, _ = s.store.Put(ctx, "robots.txt", f, info.Size(), "")
 				_ = f.Close()
 			}
 		}
@@ -245,7 +253,7 @@ func (s *SyncLoop) pollRemote(ctx context.Context) {
 	remoteMap := make(map[string]storage.Object)
 	for _, obj := range objects {
 		key := strings.TrimPrefix(obj.Key, "/")
-		if key == "" || key == "index.html" || strings.HasSuffix(key, "/index.html") || strings.HasSuffix(key, "/") || strings.HasPrefix(key, "_trash/") || key == "_trash" {
+		if key == "" || key == "index.html" || strings.HasSuffix(key, "/index.html") || key == "robots.txt" || strings.HasSuffix(key, "/robots.txt") || strings.HasSuffix(key, "/") || strings.HasPrefix(key, "_trash/") || key == "_trash" {
 			continue
 		}
 		id := index.TrimDocExt(key)
@@ -302,6 +310,7 @@ func (s *SyncLoop) pollRemote(ctx context.Context) {
 	}
 
 	_ = WriteIndexFile(s.cfg, s.idx)
+	_ = WriteRobotsFile(s.cfg)
 }
 
 func hashFile(path string) string {
