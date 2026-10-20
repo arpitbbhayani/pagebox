@@ -120,6 +120,66 @@ func TestIndexPage(t *testing.T) {
 	if !strings.Contains(body, "aui-icon-sun") || !strings.Contains(body, "aui-icon-moon") {
 		t.Errorf("expected theme toggle to contain SVG sun and moon icons")
 	}
+
+	// Verify robots and index files are not shown in UI document table
+	if strings.Contains(body, `data-id="robots"`) || strings.Contains(body, `data-text="robots.txt"`) {
+		t.Errorf("expected body to NOT list robots in document table")
+	}
+	if strings.Contains(body, `data-id="index"`) || strings.Contains(body, `data-text="index.html"`) {
+		t.Errorf("expected body to NOT list index in document table")
+	}
+}
+
+func TestRobotsAndIndexRoutes(t *testing.T) {
+	srv, _, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// 1. Test /robots.txt
+	reqRobots := httptest.NewRequest(http.MethodGet, "/robots.txt", nil)
+	recRobots := httptest.NewRecorder()
+	srv.ServeHTTP(recRobots, reqRobots)
+
+	if recRobots.Code != http.StatusOK {
+		t.Errorf("expected 200 OK for /robots.txt, got %d", recRobots.Code)
+	}
+	if !strings.Contains(recRobots.Body.String(), "User-agent: *") || !strings.Contains(recRobots.Body.String(), "Disallow: /") {
+		t.Errorf("expected robots.txt to disallow all crawlers, got:\n%s", recRobots.Body.String())
+	}
+	if !strings.HasPrefix(recRobots.Header().Get("Content-Type"), "text/plain") {
+		t.Errorf("expected text/plain Content-Type for robots.txt, got %s", recRobots.Header().Get("Content-Type"))
+	}
+
+	// 2. Test /index.html serves index page
+	reqIndex := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	recIndex := httptest.NewRecorder()
+	srv.ServeHTTP(recIndex, reqIndex)
+
+	if recIndex.Code != http.StatusOK {
+		t.Errorf("expected 200 OK for /index.html, got %d", recIndex.Code)
+	}
+	if !strings.Contains(recIndex.Body.String(), "/pagebox") {
+		t.Errorf("expected /index.html to serve index page")
+	}
+
+	// 3. Test /index serves index page
+	reqIndex2 := httptest.NewRequest(http.MethodGet, "/index", nil)
+	recIndex2 := httptest.NewRecorder()
+	srv.ServeHTTP(recIndex2, reqIndex2)
+
+	if recIndex2.Code != http.StatusOK {
+		t.Errorf("expected 200 OK for /index, got %d", recIndex2.Code)
+	}
+	if !strings.Contains(recIndex2.Body.String(), "/pagebox") {
+		t.Errorf("expected /index to serve index page")
+	}
+
+	// Verify robots and index were never added to srv.idx
+	if _, ok := srv.idx.Get("robots"); ok {
+		t.Errorf("expected robots to NOT be stored in index")
+	}
+	if _, ok := srv.idx.Get("index"); ok {
+		t.Errorf("expected index to NOT be stored in index")
+	}
 }
 
 func TestDocumentViewer(t *testing.T) {

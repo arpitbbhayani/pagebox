@@ -105,7 +105,7 @@ func (s *SyncLoop) handleFSEvent(event fsnotify.Event) {
 		return
 	}
 	slashRel := filepath.ToSlash(rel)
-	if slashRel == "index.html" || strings.HasSuffix(slashRel, "/index.html") || slashRel == "robots.txt" || strings.HasSuffix(slashRel, "/robots.txt") || strings.HasPrefix(slashRel, ".") || strings.Contains(slashRel, "/.") {
+	if index.IsIgnoredDoc(index.TrimDocExt(slashRel), slashRel) {
 		return
 	}
 	
@@ -253,7 +253,7 @@ func (s *SyncLoop) pollRemote(ctx context.Context) {
 	remoteMap := make(map[string]storage.Object)
 	for _, obj := range objects {
 		key := strings.TrimPrefix(obj.Key, "/")
-		if key == "" || key == "index.html" || strings.HasSuffix(key, "/index.html") || key == "robots.txt" || strings.HasSuffix(key, "/robots.txt") || strings.HasSuffix(key, "/") || strings.HasPrefix(key, "_trash/") || key == "_trash" {
+		if index.IsIgnoredDoc(index.TrimDocExt(key), key) {
 			continue
 		}
 		id := index.TrimDocExt(key)

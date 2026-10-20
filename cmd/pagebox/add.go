@@ -347,16 +347,7 @@ func collectDirDocFiles(docsDir, targetDir string) ([]string, error) {
 }
 
 func isIgnored(rel string) bool {
-	if rel == "index.html" || strings.HasSuffix(rel, "/index.html") || rel == "robots.txt" || strings.HasSuffix(rel, "/robots.txt") {
-		return true
-	}
-	parts := strings.Split(rel, "/")
-	for _, p := range parts {
-		if strings.HasPrefix(p, ".") {
-			return true
-		}
-	}
-	return false
+	return index.IsIgnoredDoc(index.TrimDocExt(rel), rel)
 }
 
 func computeFileHash(path string) (string, int64, error) {

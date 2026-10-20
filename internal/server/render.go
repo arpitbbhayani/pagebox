@@ -16,10 +16,10 @@ import (
 func GenerateIndexHTML(cfg pbconfig.Config, idx *index.Store) string {
 	entries := idx.List()
 
-	// Filter out index.html so it doesn't list itself
+	// Filter out index.html, robots.txt, and any ignored/system files so they are not shown on UI
 	filtered := make([]index.Entry, 0, len(entries))
 	for _, e := range entries {
-		if e.ID == "index" || e.Key == "index.html" {
+		if index.IsIgnoredDoc(e.ID, e.Key) {
 			continue
 		}
 		filtered = append(filtered, e)

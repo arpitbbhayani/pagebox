@@ -270,3 +270,52 @@ func TestPageboxListOrdersMostRecentFirst(t *testing.T) {
 		t.Errorf("expected omega-newer to appear before alpha-older in list, but got newer at %d, older at %d", newerIdx, olderIdx)
 	}
 }
+
+func TestPageboxListHidesRobotsAndIndex(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	docsDir := filepath.Join(tmpHome, "pagebox")
+	_ = os.MkdirAll(docsDir, 0755)
+
+	_ = os.WriteFile(filepath.Join(docsDir, "robots.txt"), []byte("User-agent: *\nDisallow: /\n"), 0644)
+	_ = os.WriteFile(filepath.Join(docsDir, "index.html"), []byte("<html><body>Index</body></html>"), 0644)
+	_ = os.WriteFile(filepath.Join(docsDir, "guide.html"), []byte("<h1>Guide</h1>"), 0644)
+
+	cfg := pbconfig.DefaultConfig()
+	cfg.DocsDir = docsDir
+	cfg.Backend = "s3"
+	cfg.Bucket = "test-bucket"
+	if err := pbconfig.Save(cfg); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	mock := &mockStorageForList{
+		objects: []storage.Object{
+			{Key: "robots.txt", ETag: "etag-robots", Size: 26},
+			{Key: "index.html", ETag: "etag-index", Size: 1024},
+			{Key: "guide.html", ETag: "etag-guide", Size: 500},
+		},
+	}
+
+	oldStorageNew := storageNew
+	storageNew = func(c pbconfig.Config) (storage.Storage, error) {
+		return mock, nil
+	}
+	defer func() { storageNew = oldStorageNew }()
+
+	out := captureStdout(func() {
+		listCmd.SetArgs([]string{})
+		_ = listCmd.Execute()
+	})
+
+	if !strings.Contains(out, "guide") {
+		t.Errorf("expected list to show 'guide', got:\n%s", out)
+	}
+	if strings.Contains(out, "robots") {
+		t.Errorf("expected list to NOT show 'robots' or 'robots.txt', got:\n%s", out)
+	}
+	if strings.Contains(out, "index") {
+		t.Errorf("expected list to NOT show 'index' or 'index.html', got:\n%s", out)
+	}
+}

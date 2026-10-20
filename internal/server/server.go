@@ -66,7 +66,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.Path == "/robots.txt" {
+	if r.URL.Path == "/robots.txt" || r.URL.Path == "/robots" {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(RobotsTxtContent))
 		return
@@ -79,7 +79,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.Path == "/" || r.URL.Path == "/pagebox" {
+	if r.URL.Path == "/" || r.URL.Path == "/pagebox" || r.URL.Path == "/index.html" || r.URL.Path == "/index" {
 		s.serveIndex(w, r)
 		return
 	}
@@ -108,6 +108,9 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resolveRemoteKey(id string) (string, error) {
+	if index.IsIgnoredDoc(id, "") {
+		return "", fmt.Errorf("document %s is ignored", id)
+	}
 	if entry, ok := s.idx.Get(id); ok && entry.Key != "" {
 		return entry.Key, nil
 	}
@@ -201,10 +204,10 @@ func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 	id = strings.Trim(id, "/")
 	id = index.TrimDocExt(id)
 
-	if id == "" {
+	if id == "" || index.IsIgnoredDoc(id, "") {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Missing document id"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Missing or invalid document id"})
 		return
 	}
 
@@ -236,6 +239,10 @@ func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveDocument(w http.ResponseWriter, r *http.Request, id string) {
+	if index.IsIgnoredDoc(id, "") {
+		s.serveNotFound(w, r, id)
+		return
+	}
 	entry, ok := s.idx.Get(id)
 	var localPath string
 	var localExists bool

@@ -169,28 +169,29 @@ func reconcileRemoteMetadata(cfg pbconfig.Config, store storage.Storage, idx *in
 func updateAndPushIndexHTML(cfg pbconfig.Config, store storage.Storage, idx *index.Store) {
 	if err := server.WriteIndexFile(cfg, idx); err != nil {
 		ui.PrintWarn("failed to update index.html", err.Error(), nil)
-		return
 	}
-	_ = server.WriteRobotsFile(cfg)
+	if err := server.WriteRobotsFile(cfg); err != nil {
+		ui.PrintWarn("failed to update robots.txt", err.Error(), nil)
+	}
 
 	indexPath := filepath.Join(cfg.DocsDir, "index.html")
 	if f, err := os.Open(indexPath); err == nil {
-		defer f.Close()
 		if stat, err := f.Stat(); err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
 			_, _ = store.Put(ctx, "index.html", f, stat.Size(), "")
+			cancel()
 		}
+		_ = f.Close()
 	}
 
 	robotsPath := filepath.Join(cfg.DocsDir, "robots.txt")
 	if f, err := os.Open(robotsPath); err == nil {
-		defer f.Close()
 		if stat, err := f.Stat(); err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
 			_, _ = store.Put(ctx, "robots.txt", f, stat.Size(), "")
+			cancel()
 		}
+		_ = f.Close()
 	}
 }
 

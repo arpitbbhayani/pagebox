@@ -52,6 +52,15 @@ var listCmd = &cobra.Command{
 		}
 
 		entries := idx.List()
+		var filtered []index.Entry
+		for _, e := range entries {
+			if index.IsIgnoredDoc(e.ID, e.Key) {
+				_ = idx.Delete(e.ID)
+				continue
+			}
+			filtered = append(filtered, e)
+		}
+		entries = filtered
 		
 		if len(entries) == 0 {
 			ui.PrintInfo("no documents found", "", nil)
@@ -102,16 +111,7 @@ var listCmd = &cobra.Command{
 }
 
 func isIgnoredRemoteKey(key string) bool {
-	if key == "" || key == "index.html" || strings.HasSuffix(key, "/index.html") || key == "robots.txt" || strings.HasSuffix(key, "/robots.txt") || strings.HasSuffix(key, "/") || strings.HasPrefix(key, "_trash/") || key == "_trash" {
-		return true
-	}
-	parts := strings.Split(key, "/")
-	for _, p := range parts {
-		if strings.HasPrefix(p, ".") {
-			return true
-		}
-	}
-	return false
+	return index.IsIgnoredDoc(index.TrimDocExt(key), key)
 }
 
 func syncRemoteToIndex(idx *index.Store, objects []storage.Object) {

@@ -71,6 +71,9 @@ var statusCmd = &cobra.Command{
 					return nil
 				}
 				slashRel := filepath.ToSlash(rel)
+				if index.IsIgnoredDoc(index.TrimDocExt(slashRel), slashRel) {
+					return nil
+				}
 				id := index.TrimDocExt(slashRel)
 
 				if _, ok := idx.Get(id); !ok {

@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
+	"github.com/arpitbhayani/pagebox/internal/index"
 )
 
 type s3Backend struct {
@@ -57,6 +58,18 @@ func (s *s3Backend) Put(ctx context.Context, key string, body io.Reader, size in
 		Body:   body,
 	}
 
+	lowerKey := strings.ToLower(key)
+	if strings.HasSuffix(lowerKey, ".html") {
+		contentType := "text/html; charset=utf-8"
+		input.ContentType = &contentType
+	} else if strings.HasSuffix(lowerKey, ".txt") {
+		contentType := "text/plain; charset=utf-8"
+		input.ContentType = &contentType
+	} else if strings.HasSuffix(lowerKey, ".md") || strings.HasSuffix(lowerKey, ".markdown") {
+		contentType := "text/markdown; charset=utf-8"
+		input.ContentType = &contentType
+	}
+
 	if etag != "" {
 		// S3 If-Match requires double quotes for ETag in some cases, aws sdk generally handles it, but let's be careful
 		if !strings.HasPrefix(etag, `"`) {
@@ -66,7 +79,7 @@ func (s *s3Backend) Put(ctx context.Context, key string, body io.Reader, size in
 		// If we wanted to be perfectly compliant we'd use If-Match where supported, or fallback to HeadObject check.
 		// S3 just recently added PutObject conditional writes natively.
 		input.IfMatch = &etag
-	} else {
+	} else if !index.IsIgnoredDoc("", key) {
 		// New object
 		star := "*"
 		input.IfNoneMatch = &star

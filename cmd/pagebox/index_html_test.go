@@ -54,9 +54,12 @@ func TestAddAndPushUpdatesIndexHTML(t *testing.T) {
 		t.Errorf("expected index.html to contain 'architecture', got:\n%s", htmlStr)
 	}
 
-	// Ensure index.html does not contain itself as a document in the table
+	// Ensure index.html does not contain itself or robots.txt as a document in the table
 	if strings.Contains(htmlStr, `data-id="index"`) || strings.Contains(htmlStr, `data-text="index.html"`) {
 		t.Errorf("expected index.html to exclude itself from document table")
+	}
+	if strings.Contains(htmlStr, `data-id="robots"`) || strings.Contains(htmlStr, `data-text="robots.txt"`) {
+		t.Errorf("expected index.html to exclude robots.txt from document table")
 	}
 
 	// 3. Mark another file dirty and run push

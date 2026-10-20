@@ -111,6 +111,9 @@ func (s *Store) load() error {
 
 	s.entries = make(map[string]Entry, len(list))
 	for _, e := range list {
+		if IsIgnoredDoc(e.ID, e.Key) {
+			continue
+		}
 		s.entries[e.ID] = e
 	}
 	return nil
@@ -176,24 +179,71 @@ func TrimDocExt(s string) string {
 	return s
 }
 
+// IsIgnoredDoc returns true if the document (by ID or Key) is an internal system file
+// (such as index.html or robots.txt) or hidden file that should not be tracked, listed, or shown as a document.
+func IsIgnoredDoc(id, key string) bool {
+	check := func(s string) bool {
+		raw := strings.TrimSpace(s)
+		if strings.HasSuffix(raw, "/") {
+			return true
+		}
+		s = strings.TrimPrefix(filepath.ToSlash(raw), "/")
+		if s == "" {
+			return true
+		}
+		lower := strings.ToLower(s)
+		if lower == "index.html" || strings.HasSuffix(lower, "/index.html") ||
+			lower == "robots.txt" || strings.HasSuffix(lower, "/robots.txt") ||
+			lower == "index" || strings.HasSuffix(lower, "/index") ||
+			lower == "robots" || strings.HasSuffix(lower, "/robots") ||
+			lower == "_trash" || strings.HasPrefix(lower, "_trash/") {
+			return true
+		}
+		parts := strings.Split(s, "/")
+		for _, p := range parts {
+			if strings.HasPrefix(p, ".") {
+				return true
+			}
+		}
+		return false
+	}
+
+	return (id != "" && check(id)) || (key != "" && check(key))
+}
+
 // Get returns an entry by ID or Key.
 func (s *Store) Get(id string) (Entry, bool) {
+	if IsIgnoredDoc(id, "") {
+		return Entry{}, false
+	}
 	s.reloadIfModified()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if e, ok := s.entries[id]; ok {
+		if IsIgnoredDoc(e.ID, e.Key) {
+			return Entry{}, false
+		}
 		return e, true
 	}
 	trimmed := TrimDocExt(id)
 	if e, ok := s.entries[trimmed]; ok {
+		if IsIgnoredDoc(e.ID, e.Key) {
+			return Entry{}, false
+		}
 		return e, true
 	}
 	for _, ext := range []string{".html", ".md", ".markdown"} {
 		if e, ok := s.entries[trimmed+ext]; ok {
+			if IsIgnoredDoc(e.ID, e.Key) {
+				return Entry{}, false
+			}
 			return e, true
 		}
 	}
 	for _, e := range s.entries {
+		if IsIgnoredDoc(e.ID, e.Key) {
+			continue
+		}
 		if e.Key == id || e.ID == id || e.ID == trimmed || TrimDocExt(e.Key) == trimmed || TrimDocExt(e.ID) == trimmed {
 			return e, true
 		}
@@ -208,6 +258,9 @@ func (s *Store) List() []Entry {
 	defer s.mu.RUnlock()
 	list := make([]Entry, 0, len(s.entries))
 	for _, e := range s.entries {
+		if IsIgnoredDoc(e.ID, e.Key) {
+			continue
+		}
 		list = append(list, e)
 	}
 	return list
@@ -215,6 +268,9 @@ func (s *Store) List() []Entry {
 
 // Update mutates an entry within a file lock to guarantee cross-process consistency.
 func (s *Store) Update(id string, mutate func(*Entry)) error {
+	if IsIgnoredDoc(id, "") {
+		return nil
+	}
 	locked, err := s.lock.TryLock()
 	if err != nil {
 		return err
@@ -260,6 +316,11 @@ func (s *Store) Update(id string, mutate func(*Entry)) error {
 	}
 	
 	mutate(&e)
+	if IsIgnoredDoc(e.ID, e.Key) {
+		delete(s.entries, actualID)
+		delete(s.entries, id)
+		return s.save()
+	}
 	s.entries[actualID] = e
 
 	return s.save()
