@@ -24,6 +24,9 @@ func (d *dummyStorage) Put(ctx context.Context, key string, body io.Reader, size
 }
 
 func (d *dummyStorage) Get(ctx context.Context, key string, etag string) (io.ReadCloser, string, error) {
+	if strings.HasPrefix(key, "non-existent") {
+		return nil, "", storage.ErrNotFound
+	}
 	return io.NopCloser(strings.NewReader("<h1>Dummy Remote</h1>")), "dummy-etag", nil
 }
 
@@ -720,6 +723,77 @@ func TestThemeBridgeAndLocalStorageSync(t *testing.T) {
 	}
 	if !strings.Contains(body, "onload=\"onFrameLoaded(this)\"") {
 		t.Errorf("expected iframe to have onload attribute calling onFrameLoaded")
+	}
+}
+
+func TestAPIFetchAndLazyLoad(t *testing.T) {
+	srv, tmpDir, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// 1. Add entry to index with state cached, but file does not exist on disk
+	docID := "consistent-hashing-live"
+	docKey := "consistent-hashing-live.html"
+	_ = srv.idx.Update(docID, func(e *index.Entry) {
+		e.ID = docID
+		e.Key = docKey
+		e.State = index.StateCached
+		e.RemoteETag = "etag-chl"
+		e.Size = 64762
+	})
+	defer func() {
+		_ = srv.idx.Delete(docID)
+	}()
+
+	localExpected := filepath.Join(tmpDir, docKey)
+	if _, err := os.Stat(localExpected); !os.IsNotExist(err) {
+		t.Fatalf("file should not exist on disk initially")
+	}
+
+	// 2. Trigger lazy load via API endpoint
+	apiReq := httptest.NewRequest(http.MethodPost, "/_pagebox/api/fetch?id="+docID, nil)
+	apiRec := httptest.NewRecorder()
+	srv.ServeHTTP(apiRec, apiReq)
+
+	if apiRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from API fetch, got %d: %s", apiRec.Code, apiRec.Body.String())
+	}
+
+	if !strings.Contains(apiRec.Body.String(), `"status":"ok"`) {
+		t.Errorf("expected json status ok, got: %s", apiRec.Body.String())
+	}
+
+	// 3. Verify file was saved onto local disk
+	if _, err := os.Stat(localExpected); err != nil {
+		t.Fatalf("expected file to exist on disk after API fetch: %v", err)
+	}
+
+	content, _ := os.ReadFile(localExpected)
+	if !strings.Contains(string(content), "Dummy Remote") {
+		t.Errorf("expected file content from dummy storage, got: %s", string(content))
+	}
+
+	// 4. Verify entry in index is cached
+	e, ok := srv.idx.Get(docID)
+	if !ok || e.State != index.StateCached {
+		t.Errorf("expected index entry to be cached, got: %v", e.State)
+	}
+
+	// 5. Test direct GET to /consistent-hashing-live serves 200 OK document viewer
+	docReq := httptest.NewRequest(http.MethodGet, "/"+docID, nil)
+	docRec := httptest.NewRecorder()
+	srv.ServeHTTP(docRec, docReq)
+
+	if docRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from document viewer, got %d", docRec.Code)
+	}
+
+	// 6. Test API fetch for non-existent document
+	badReq := httptest.NewRequest(http.MethodPost, "/_pagebox/api/fetch?id=non-existent-doc", nil)
+	badRec := httptest.NewRecorder()
+	srv.ServeHTTP(badRec, badReq)
+
+	if badRec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for non-existent doc fetch, got %d", badRec.Code)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
@@ -28,9 +30,11 @@ const mainIconURL = "https://github.com/user-attachments/assets/3ed0b526-191c-40
 var markedJS []byte
 
 type Server struct {
-	cfg   pbconfig.Config
-	idx   *index.Store
-	store storage.Storage
+	cfg     pbconfig.Config
+	idx     *index.Store
+	store   storage.Storage
+	fetchMu sync.Mutex
+	inFly   map[string]chan struct{}
 }
 
 func New(cfg pbconfig.Config, idx *index.Store, store storage.Storage) *Server {
@@ -38,6 +42,7 @@ func New(cfg pbconfig.Config, idx *index.Store, store storage.Storage) *Server {
 		cfg:   cfg,
 		idx:   idx,
 		store: store,
+		inFly: make(map[string]chan struct{}),
 	}
 }
 
@@ -48,6 +53,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/healthz" {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok\n"))
+		return
+	}
+
+	if r.URL.Path == "/_pagebox/api/fetch" {
+		s.handleAPIFetch(w, r)
 		return
 	}
 
@@ -89,6 +99,14 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	entries := s.idx.List()
+	for i := range entries {
+		if entries[i].State == index.StateCached && entries[i].Key != "" {
+			p := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(entries[i].Key))
+			if fi, err := os.Stat(p); err != nil || fi.IsDir() {
+				entries[i].State = index.StatePlaceholder
+			}
+		}
+	}
 	sort.Slice(entries, func(i, j int) bool {
 		tI := entries[i].Timestamp(s.cfg.DocsDir)
 		tJ := entries[j].Timestamp(s.cfg.DocsDir)
@@ -466,6 +484,46 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	});
 
+	// Lazy load placeholder documents when clicked from index
+	tbody.addEventListener('click', function(e) {
+		var link = e.target.closest('.aui-doc-link, .aui-action-btn');
+		if (!link) return;
+
+		var row = link.closest('.aui-tr-file');
+		if (!row) return;
+
+		var state = (row.getAttribute('data-state') || '').toLowerCase();
+		var id = row.getAttribute('data-id');
+
+		if (state === 'placeholder') {
+			e.preventDefault();
+			var actionBtn = row.querySelector('.aui-action-btn');
+			var docLink = row.querySelector('.aui-doc-link');
+			if (actionBtn) {
+				actionBtn.textContent = 'Loading...';
+				actionBtn.style.opacity = '0.7';
+				actionBtn.style.pointerEvents = 'none';
+			}
+			if (docLink) {
+				docLink.style.opacity = '0.7';
+			}
+
+			fetch('/_pagebox/api/fetch?id=' + encodeURIComponent(id), {
+				method: 'POST'
+			})
+			.then(function(res) {
+				if (!res.ok) throw new Error('Fetch failed');
+				return res.json();
+			})
+			.then(function() {
+				window.location.href = '/' + encodeURIComponent(id);
+			})
+			.catch(function() {
+				window.location.href = '/' + encodeURIComponent(id);
+			});
+		}
+	});
+
 	applyFilters();
 })();
 </script>
@@ -493,89 +551,209 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(htmlContent))
 }
 
+func (s *Server) resolveRemoteKey(id string) (string, error) {
+	if entry, ok := s.idx.Get(id); ok && entry.Key != "" {
+		return entry.Key, nil
+	}
+	candidates := []string{
+		id + ".html",
+		id + ".md",
+		id + ".markdown",
+		id,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for _, cand := range candidates {
+		body, _, err := s.store.Get(ctx, cand, "")
+		if err == nil {
+			body.Close()
+			return cand, nil
+		}
+	}
+	return "", fmt.Errorf("document %s not found in remote storage", id)
+}
+
+func (s *Server) fetchRemote(id string) (index.Entry, string, error) {
+	s.fetchMu.Lock()
+	if s.inFly == nil {
+		s.inFly = make(map[string]chan struct{})
+	}
+	if ch, active := s.inFly[id]; active {
+		s.fetchMu.Unlock()
+		<-ch // wait for in-flight fetch to complete
+		entry, _ := s.idx.Get(id)
+		key := entry.Key
+		if key != "" {
+			localPath := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(key))
+			if _, err := os.Stat(localPath); err == nil {
+				return entry, localPath, nil
+			}
+		}
+		return s.fetchRemote(id)
+	}
+
+	ch := make(chan struct{})
+	s.inFly[id] = ch
+	s.fetchMu.Unlock()
+
+	defer func() {
+		s.fetchMu.Lock()
+		delete(s.inFly, id)
+		close(ch)
+		s.fetchMu.Unlock()
+	}()
+
+	entry, _ := s.idx.Get(id)
+	key := entry.Key
+	if key == "" {
+		resolvedKey, err := s.resolveRemoteKey(id)
+		if err != nil {
+			return entry, "", err
+		}
+		key = resolvedKey
+		entry.ID = id
+		entry.Key = key
+	}
+
+	localPath := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(key))
+	err := s.fetch(id, entry, localPath)
+	if err != nil {
+		return entry, "", err
+	}
+
+	if updated, ok := s.idx.Get(id); ok {
+		entry = updated
+	} else {
+		entry.State = index.StateCached
+		entry.Key = key
+	}
+
+	return entry, localPath, nil
+}
+
+func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		id = r.FormValue("id")
+	}
+	id = strings.Trim(id, "/")
+	id = index.TrimDocExt(id)
+
+	if id == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Missing document id"})
+		return
+	}
+
+	if s.store == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Remote storage not configured"})
+		return
+	}
+
+	entry, _, err := s.fetchRemote(id)
+	if err != nil {
+		log.Printf("api fetch error for %s: %v", id, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+		"id":     entry.ID,
+		"key":    entry.Key,
+		"size":   entry.Size,
+		"state":  string(entry.State),
+	})
+}
+
 func (s *Server) serveDocument(w http.ResponseWriter, r *http.Request, id string) {
 	entry, ok := s.idx.Get(id)
 	var localPath string
+	var localExists bool
 
-	if !ok {
-		// Could be a new file on disk not yet in the index
+	// Check if file exists locally
+	if ok && entry.Key != "" {
+		p := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(entry.Key))
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			if entry.State != index.StatePlaceholder || (fi.Size() > 0 && entry.Size > 0) {
+				localPath = p
+				localExists = true
+			}
+		}
+	}
+
+	if !localExists {
 		candidates := []string{
 			id + ".html",
 			id + ".md",
 			id + ".markdown",
 			id,
 		}
-		found := false
 		for _, cand := range candidates {
 			p := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(cand))
-			if _, err := os.Stat(p); err == nil {
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 				localPath = p
-				entry = index.Entry{
-					ID:    id,
-					Key:   cand,
-					State: index.StateNew,
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			s.serveNotFound(w, r, id)
-			return
-		}
-	} else {
-		localPath = filepath.Join(s.cfg.DocsDir, filepath.FromSlash(entry.Key))
-		fi, statErr := os.Stat(localPath)
-		// If entry.Key is empty or localPath is a directory or missing, resolve against candidates
-		if entry.Key == "" || statErr != nil || fi.IsDir() {
-			candidates := []string{
-				id + ".html",
-				id + ".md",
-				id + ".markdown",
-				id,
-			}
-			found := false
-			for _, cand := range candidates {
-				p := filepath.Join(s.cfg.DocsDir, filepath.FromSlash(cand))
-				if info, err := os.Stat(p); err == nil && !info.IsDir() {
-					localPath = p
+				if !ok {
+					entry = index.Entry{
+						ID:    id,
+						Key:   cand,
+						State: index.StateNew,
+						Size:  fi.Size(),
+					}
+				} else {
 					entry.Key = cand
 					if entry.State == "" {
 						entry.State = index.StateCached
 					}
-					// Heal the index entry
 					_ = s.idx.Update(id, func(e *index.Entry) {
 						e.ID = id
 						e.Key = cand
 						if e.State == "" {
 							e.State = index.StateCached
 						}
-						e.Size = info.Size()
+						e.Size = fi.Size()
 						if e.LastSyncedAt.IsZero() {
-							e.LastSyncedAt = info.ModTime()
+							e.LastSyncedAt = fi.ModTime()
 						}
 					})
-					found = true
-					break
 				}
+				localExists = true
+				break
 			}
-			if !found && entry.State != index.StatePlaceholder && entry.State != index.StateStale {
-				s.serveNotFound(w, r, id)
-				return
-			}
+		}
+	}
+
+	// If file does not exist locally, lazy load from S3 remote storage
+	if !localExists {
+		if s.store == nil {
+			s.serveNotFound(w, r, id)
+			return
 		}
 
-		// Lazy fetch if placeholder or stale
-		if entry.State == index.StatePlaceholder || entry.State == index.StateStale {
-			err := s.fetch(id, entry, localPath)
-			if err != nil {
-				if _, statErr := os.Stat(localPath); statErr != nil {
-					s.serveError(w, r, id, fmt.Sprintf("Failed to fetch document from remote storage: %v", err))
-					return
-				}
-				log.Printf("fetch failed for %s, serving stale local copy: %v", id, err)
-			}
+		fetchedEntry, fetchedPath, err := s.fetchRemote(id)
+		if err != nil {
+			log.Printf("lazy fetch failed for %s: %v", id, err)
+			s.serveNotFound(w, r, id)
+			return
 		}
+		entry = fetchedEntry
+		localPath = fetchedPath
+	} else if entry.State == index.StateStale && s.store != nil {
+		// If local file exists but is marked stale, refresh from remote
+		_ = s.fetch(id, entry, localPath)
 	}
 
 	lowerPath := strings.ToLower(localPath)
@@ -1812,23 +1990,27 @@ func (s *Server) fetch(id string, entry index.Entry, localPath string) error {
 		return err
 	}
 
-	f, err := os.Create(localPath)
+	tempPath := filepath.Join(filepath.Dir(localPath), "."+filepath.Base(localPath)+fmt.Sprintf(".tmp-%d", time.Now().UnixNano()))
+	f, err := os.Create(tempPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	hash := sha256.New()
 	writer := io.MultiWriter(f, hash)
 
 	written, err := io.Copy(writer, body)
+	f.Close()
 	if err != nil {
+		os.Remove(tempPath)
 		return err
 	}
 
 	sha256Hex := hex.EncodeToString(hash.Sum(nil))
 
 	s.idx.Update(id, func(e *index.Entry) {
+		e.ID = id
+		e.Key = entry.Key
 		e.State = index.StateCached
 		e.BaseETag = etag
 		e.RemoteETag = etag
@@ -1836,6 +2018,11 @@ func (s *Server) fetch(id string, entry index.Entry, localPath string) error {
 		e.LocalSHA256 = sha256Hex
 		e.LastSyncedAt = time.Now()
 	})
+
+	if err := os.Rename(tempPath, localPath); err != nil {
+		os.Remove(tempPath)
+		return err
+	}
 
 	return nil
 }

@@ -117,15 +117,31 @@ func (s *SyncLoop) handleFSEvent(event fsnotify.Event) {
 }
 
 func (s *SyncLoop) markDirtyAndSchedule(id, key string) {
+	currentHash := hashFile(filepath.Join(s.cfg.DocsDir, filepath.FromSlash(key)))
+	isDirty := false
 	s.idx.Update(id, func(e *index.Entry) {
 		if e.ID == "" {
 			e.ID = id
 			e.Key = key
 			e.State = index.StateNew
+			e.LocalSHA256 = currentHash
+			isDirty = true
 		} else if e.State == index.StateCached {
+			if e.LocalSHA256 != "" && currentHash == e.LocalSHA256 {
+				return
+			}
 			e.State = index.StateDirty
+			e.LocalSHA256 = currentHash
+			isDirty = true
+		} else if e.State == index.StateNew || e.State == index.StateDirty {
+			e.LocalSHA256 = currentHash
+			isDirty = true
 		}
 	})
+
+	if !isDirty {
+		return
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
