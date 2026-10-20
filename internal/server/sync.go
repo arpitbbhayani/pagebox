@@ -105,7 +105,7 @@ func (s *SyncLoop) handleFSEvent(event fsnotify.Event) {
 		return
 	}
 	slashRel := filepath.ToSlash(rel)
-	if strings.HasPrefix(slashRel, ".") || strings.Contains(slashRel, "/.") {
+	if slashRel == "index.html" || strings.HasSuffix(slashRel, "/index.html") || strings.HasPrefix(slashRel, ".") || strings.Contains(slashRel, "/.") {
 		return
 	}
 	
@@ -221,6 +221,17 @@ func (s *SyncLoop) push(ctx context.Context, id string) {
 		e.RemoteETag = newEtag
 		e.LastSyncedAt = time.Now()
 	})
+	// Push index.html to remote storage if configured
+	if s.store != nil {
+		_ = WriteIndexFile(s.cfg, s.idx)
+		indexPath := filepath.Join(s.cfg.DocsDir, "index.html")
+		if info, err := os.Stat(indexPath); err == nil {
+			if f, err := os.Open(indexPath); err == nil {
+				_, _ = s.store.Put(ctx, "index.html", f, info.Size(), "")
+				_ = f.Close()
+			}
+		}
+	}
 }
 
 func (s *SyncLoop) pollRemote(ctx context.Context) {
@@ -234,6 +245,9 @@ func (s *SyncLoop) pollRemote(ctx context.Context) {
 	remoteMap := make(map[string]storage.Object)
 	for _, obj := range objects {
 		key := strings.TrimPrefix(obj.Key, "/")
+		if key == "" || key == "index.html" || strings.HasSuffix(key, "/index.html") || strings.HasSuffix(key, "/") || strings.HasPrefix(key, "_trash/") || key == "_trash" {
+			continue
+		}
 		id := index.TrimDocExt(key)
 		remoteMap[id] = obj
 	}
@@ -286,6 +300,8 @@ func (s *SyncLoop) pollRemote(ctx context.Context) {
 			}
 		})
 	}
+
+	_ = WriteIndexFile(s.cfg, s.idx)
 }
 
 func hashFile(path string) string {

@@ -13,6 +13,7 @@ import (
 
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
 	"github.com/arpitbhayani/pagebox/internal/index"
+	"github.com/arpitbhayani/pagebox/internal/server"
 	"github.com/arpitbhayani/pagebox/internal/storage"
 	"github.com/arpitbhayani/pagebox/internal/ui"
 )
@@ -45,6 +46,10 @@ var pullCmd = &cobra.Command{
 			pullOne(args[0], force, cfg, store, idx)
 		} else {
 			pullAll(force, cfg, store, idx)
+		}
+
+		if err := server.WriteIndexFile(cfg, idx); err != nil {
+			ui.PrintWarn("failed to update index.html", err.Error(), nil)
 		}
 	},
 }
@@ -129,6 +134,9 @@ func pullAll(force bool, cfg pbconfig.Config, store storage.Storage, idx *index.
 	remoteMap := make(map[string]storage.Object)
 	for _, obj := range objects {
 		key := strings.TrimPrefix(obj.Key, "/")
+		if isIgnoredRemoteKey(key) {
+			continue
+		}
 		id := index.TrimDocExt(key)
 		remoteMap[id] = obj
 	}

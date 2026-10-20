@@ -15,6 +15,7 @@ import (
 
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
 	"github.com/arpitbhayani/pagebox/internal/index"
+	"github.com/arpitbhayani/pagebox/internal/server"
 	"github.com/arpitbhayani/pagebox/internal/ui"
 )
 
@@ -117,6 +118,10 @@ var addCmd = &cobra.Command{
 				fmt.Printf("add '%s'\n", file)
 			}
 
+			if err := server.WriteIndexFile(cfg, idx); err != nil {
+				ui.PrintWarn("failed to update index.html", err.Error(), nil)
+			}
+
 			if cfg.IsS3Configured() {
 				store, err := storageNew(cfg)
 				if err != nil {
@@ -129,6 +134,7 @@ var addCmd = &cobra.Command{
 						os.Exit(1)
 					}
 				}
+				updateAndPushIndexHTML(cfg, store, idx)
 			} else {
 				ui.Hint("push changes to remote storage:", nil)
 				ui.Command("pagebox push", nil)
@@ -340,6 +346,9 @@ func collectDirDocFiles(docsDir, targetDir string) ([]string, error) {
 }
 
 func isIgnored(rel string) bool {
+	if rel == "index.html" || strings.HasSuffix(rel, "/index.html") || rel == "robots.txt" || strings.HasSuffix(rel, "/robots.txt") {
+		return true
+	}
 	parts := strings.Split(rel, "/")
 	for _, p := range parts {
 		if strings.HasPrefix(p, ".") {

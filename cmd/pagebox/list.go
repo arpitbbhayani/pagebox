@@ -102,7 +102,7 @@ var listCmd = &cobra.Command{
 }
 
 func isIgnoredRemoteKey(key string) bool {
-	if key == "" || strings.HasSuffix(key, "/") || strings.HasPrefix(key, "_trash/") || key == "_trash" {
+	if key == "" || key == "index.html" || strings.HasSuffix(key, "/index.html") || key == "robots.txt" || strings.HasSuffix(key, "/robots.txt") || strings.HasSuffix(key, "/") || strings.HasPrefix(key, "_trash/") || key == "_trash" {
 		return true
 	}
 	parts := strings.Split(key, "/")

@@ -12,6 +12,7 @@ import (
 
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
 	"github.com/arpitbhayani/pagebox/internal/index"
+	"github.com/arpitbhayani/pagebox/internal/server"
 	"github.com/arpitbhayani/pagebox/internal/storage"
 	"github.com/arpitbhayani/pagebox/internal/ui"
 )
@@ -40,11 +41,17 @@ var pushCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Reconcile remote metadata so the index contains all remote files
+		reconcileRemoteMetadata(cfg, store, idx)
+
 		if len(args) > 0 {
 			pushOne(args[0], cfg, store, idx)
 		} else {
 			pushDirty(cfg, store, idx)
 		}
+
+		// Update index.html locally and push to remote storage
+		updateAndPushIndexHTML(cfg, store, idx)
 	},
 }
 
@@ -146,6 +153,41 @@ func pushDirty(cfg pbconfig.Config, store storage.Storage, idx *index.Store) {
 	if pushedCount == 0 {
 		ui.PrintInfo("no dirty documents to push", "", nil)
 	}
+}
+
+func reconcileRemoteMetadata(cfg pbconfig.Config, store storage.Storage, idx *index.Store) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	objects, err := store.List(ctx)
+	if err != nil {
+		return
+	}
+	syncRemoteToIndex(idx, objects)
+}
+
+func updateAndPushIndexHTML(cfg pbconfig.Config, store storage.Storage, idx *index.Store) {
+	if err := server.WriteIndexFile(cfg, idx); err != nil {
+		ui.PrintWarn("failed to update index.html", err.Error(), nil)
+		return
+	}
+
+	indexPath := filepath.Join(cfg.DocsDir, "index.html")
+	f, err := os.Open(indexPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	_, _ = store.Put(ctx, "index.html", f, stat.Size(), "")
 }
 
 

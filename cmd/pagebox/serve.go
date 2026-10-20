@@ -80,6 +80,9 @@ var serveCmd = &cobra.Command{
 			}
 		}()
 
+		// Ensure index.html exists in DocsDir
+		_ = server.WriteIndexFile(cfg, idx)
+
 		if !noUpdate {
 			go autoUpdate(version)
 		}

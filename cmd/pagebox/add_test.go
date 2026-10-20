@@ -370,11 +370,13 @@ func TestPageboxAddExternalDirectorySymlink(t *testing.T) {
 type mockStorage struct {
 	putCalled bool
 	putKey    string
+	putKeys   []string
 }
 
 func (m *mockStorage) Put(ctx context.Context, key string, body io.Reader, size int64, etag string) (string, error) {
 	m.putCalled = true
 	m.putKey = key
+	m.putKeys = append(m.putKeys, key)
 	return "mock-etag-123", nil
 }
 
@@ -423,8 +425,21 @@ func TestPageboxAddUploadsToS3IfConfigured(t *testing.T) {
 	if !mock.putCalled {
 		t.Errorf("expected S3 Put to be called when S3 is configured, but was not")
 	}
-	if mock.putKey != "architecture.md" {
-		t.Errorf("expected putKey 'architecture.md', got '%s'", mock.putKey)
+	foundDoc := false
+	foundIndexHTML := false
+	for _, k := range mock.putKeys {
+		if k == "architecture.md" {
+			foundDoc = true
+		}
+		if k == "index.html" {
+			foundIndexHTML = true
+		}
+	}
+	if !foundDoc {
+		t.Errorf("expected putKeys to contain 'architecture.md', got %v", mock.putKeys)
+	}
+	if !foundIndexHTML {
+		t.Errorf("expected putKeys to contain 'index.html', got %v", mock.putKeys)
 	}
 	if !strings.Contains(out, "pushed document") {
 		t.Errorf("expected output to contain 'pushed document', got:\n%s", out)
