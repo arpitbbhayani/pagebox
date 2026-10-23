@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 	
 	"github.com/spf13/cobra"
 	
@@ -18,7 +20,7 @@ import (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Summary of dirty, diverged, and stale documents",
+	Short: "Compare local files with S3: dirty, diverged, stale, and missing documents",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := pbconfig.Load()
 		if err != nil {
@@ -32,21 +34,84 @@ var statusCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		entries := idx.List()
-		var dirty, diverged, stale, missing []index.Entry
-		
-		for _, e := range entries {
-			switch e.State {
-			case index.StateDirty, index.StateNew:
-				dirty = append(dirty, e)
-			case index.StateDiverged:
-				diverged = append(diverged, e)
-			case index.StateStale:
+		store, err := storage.New(cfg)
+		if err != nil {
+			ui.PrintErr("failed to init storage", err.Error(), nil)
+			os.Exit(1)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		sp := ui.NewSpinner("Comparing local files with remote")
+		objects, err := store.List(ctx)
+		if err != nil {
+			sp.Stop(false)
+			ui.PrintErr("failed to list remote objects", err.Error(), nil)
+			os.Exit(1)
+		}
+		sp.Stop(true)
+
+		remote := remoteDocs(objects)
+		var dirty, diverged, stale, missing, gone []index.Entry
+		clean := 0
+
+		for id, rem := range remote {
+			e, _ := idx.Get(id)
+			e.ID, e.Key = id, rem.Key
+			st, sha := compareDoc(cfg.DocsDir, e, rem)
+
+			switch st {
+			case statusClean:
+				clean++
+			case statusRemoteOnly:
+				missing = append(missing, e)
+			case statusStale:
 				stale = append(stale, e)
-			case index.StatePlaceholder:
-				// The PRD mentions that a key that disappeared from S3 is flagged in 'status'
-				// We don't have a specific explicit missing state yet, but we'll show actionable items
+			case statusDirty:
+				dirty = append(dirty, e)
+			case statusDiverged:
+				diverged = append(diverged, e)
 			}
+
+			// Persist what we learned so the index and UI agree with reality.
+			idx.Update(id, func(entry *index.Entry) {
+				entry.ID, entry.Key = id, rem.Key
+				entry.RemoteETag = rem.ETag
+				switch st {
+				case statusClean:
+					entry.State = index.StateCached
+					entry.BaseETag = rem.ETag
+					entry.LocalSHA256 = sha
+					entry.Size = rem.Size
+				case statusRemoteOnly:
+					entry.State = index.StatePlaceholder
+				case statusStale:
+					entry.State = index.StateStale
+				case statusDirty:
+					entry.State = index.StateDirty
+					entry.LocalSHA256 = sha
+				case statusDiverged:
+					entry.State = index.StateDiverged
+					entry.LocalSHA256 = sha
+				}
+			})
+		}
+
+		// Tracked locally but absent from S3: new files awaiting push, or removed remotely.
+		for _, e := range idx.List() {
+			if _, ok := remote[e.ID]; ok {
+				continue
+			}
+			localPath := filepath.Join(cfg.DocsDir, filepath.FromSlash(e.Key))
+			if fi, err := os.Stat(localPath); err == nil && !fi.IsDir() && (e.BaseETag == "" || e.State == index.StateNew) {
+				dirty = append(dirty, index.Entry{ID: e.ID, Key: e.Key, State: index.StateNew})
+			} else {
+				gone = append(gone, e)
+			}
+		}
+		sort.Slice(dirty, func(i, j int) bool { return dirty[i].ID < dirty[j].ID })
+		for _, l := range [][]index.Entry{diverged, stale, missing, gone} {
+			sort.Slice(l, func(i, j int) bool { return l[i].ID < l[j].ID })
 		}
 
 		// Find untracked files in cfg.DocsDir
@@ -83,9 +148,9 @@ var statusCmd = &cobra.Command{
 			})
 		}
 
-		totalActionable := len(dirty) + len(diverged) + len(stale) + len(missing) + len(untracked)
+		totalActionable := len(dirty) + len(diverged) + len(stale) + len(missing) + len(gone) + len(untracked)
 		if totalActionable == 0 {
-			ui.PrintOk("everything is up to date", "", nil)
+			ui.PrintOk("everything is up to date", fmt.Sprintf("%d documents in sync", clean), nil)
 			os.Exit(0)
 		}
 
@@ -105,6 +170,22 @@ var statusCmd = &cobra.Command{
 			}
 			ui.Hint("update stale documents:", nil)
 			ui.Command("pagebox pull", nil)
+		}
+
+		if len(missing) > 0 {
+			ui.Heading("not downloaded", &[]int{len(missing)}[0], nil)
+			for _, e := range missing {
+				ui.PrintStep(e.ID, "on remote only", nil)
+			}
+			ui.Hint("download missing documents:", nil)
+			ui.Command("pagebox pull", nil)
+		}
+
+		if len(gone) > 0 {
+			ui.Heading("removed remotely", &[]int{len(gone)}[0], nil)
+			for _, e := range gone {
+				ui.PrintWarn(e.ID, "no longer on remote", nil)
+			}
 		}
 
 		if len(dirty) > 0 {

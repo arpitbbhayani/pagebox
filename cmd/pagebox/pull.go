@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
+	"sort"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -42,16 +44,20 @@ var pullCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		failed := 0
 		if len(args) > 0 {
 			pullOne(args[0], force, cfg, store, idx)
 		} else {
-			pullAll(force, cfg, store, idx)
+			failed = pullAll(force, cfg, store, idx)
 		}
 
 		if err := server.WriteIndexFile(cfg, idx); err != nil {
 			ui.PrintWarn("failed to update index.html", err.Error(), nil)
 		}
 		_ = server.WriteRobotsFile(cfg)
+		if failed > 0 {
+			os.Exit(2)
+		}
 	},
 }
 
@@ -72,54 +78,72 @@ func pullOne(id string, force bool, cfg pbconfig.Config, store storage.Storage, 
 		backupFile(cfg.DocsDir, entry.Key)
 	}
 
+	if err := downloadDoc(entry, cfg, store, idx); err != nil {
+		os.Exit(2)
+	}
+}
+
+// downloadDoc fetches a document from S3 into the docs directory and records it as cached.
+// Errors are reported to the user before being returned.
+func downloadDoc(entry index.Entry, cfg pbconfig.Config, store storage.Storage, idx *index.Store) error {
+	id := entry.ID
 	sp := ui.NewSpinner(fmt.Sprintf("Downloading %s", id))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	fail := func(msg string, err error) error {
+		sp.Stop(false)
+		ui.PrintErr(msg, err.Error(), nil)
+		return err
+	}
+
 	body, etag, err := store.Get(ctx, entry.Key, entry.RemoteETag)
 	if err != nil {
-		sp.Stop(false)
-		ui.PrintErr("download failed", err.Error(), nil)
-		os.Exit(2)
+		return fail("download failed", err)
 	}
 	defer body.Close()
 
 	dest := filepath.Join(cfg.DocsDir, filepath.FromSlash(entry.Key))
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-		sp.Stop(false)
-		ui.PrintErr("failed to create directory", err.Error(), nil)
-		os.Exit(1)
+		return fail("failed to create directory", err)
 	}
 
-	f, err := os.Create(dest)
+	tmp := dest + ".pagebox-tmp"
+	f, err := os.Create(tmp)
 	if err != nil {
-		sp.Stop(false)
-		ui.PrintErr("failed to create file", err.Error(), nil)
-		os.Exit(1)
+		return fail("failed to create file", err)
 	}
 
-	written, err := io.Copy(f, body)
+	h := sha256.New()
+	written, err := io.Copy(io.MultiWriter(f, h), body)
 	f.Close()
-	
+	if err == nil {
+		err = os.Rename(tmp, dest)
+	}
 	if err != nil {
-		sp.Stop(false)
-		ui.PrintErr("write failed", err.Error(), nil)
-		os.Exit(1)
+		os.Remove(tmp)
+		return fail("write failed", err)
 	}
 
+	sum := hex.EncodeToString(h.Sum(nil))
 	idx.Update(id, func(e *index.Entry) {
+		e.ID = id
+		e.Key = entry.Key
 		e.State = index.StateCached
 		e.BaseETag = etag
 		e.RemoteETag = etag
+		e.LocalSHA256 = sum
 		e.Size = written
 		e.LastSyncedAt = time.Now()
 	})
 
 	sp.Stop(true)
 	ui.PrintOk("pulled document", id, nil)
+	return nil
 }
 
-func pullAll(force bool, cfg pbconfig.Config, store storage.Storage, idx *index.Store) {
+// pullAll downloads every remote document that is missing or stale locally and returns the failure count.
+func pullAll(force bool, cfg pbconfig.Config, store storage.Storage, idx *index.Store) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -132,64 +156,63 @@ func pullAll(force bool, cfg pbconfig.Config, store storage.Storage, idx *index.
 	}
 	sp.Stop(true)
 
-	remoteMap := make(map[string]storage.Object)
-	for _, obj := range objects {
-		key := strings.TrimPrefix(obj.Key, "/")
-		if isIgnoredRemoteKey(key) {
-			continue
-		}
-		id := index.TrimDocExt(key)
-		remoteMap[id] = obj
+	remote := remoteDocs(objects)
+	ids := make([]string, 0, len(remote))
+	for id := range remote {
+		ids = append(ids, id)
 	}
+	sort.Strings(ids)
 
-	pulledCount := 0
-	skippedCount := 0
+	pulled, skipped, failed := 0, 0, 0
 
-	for _, e := range idx.List() {
-		rem, exists := remoteMap[e.ID]
-		if !exists {
-			continue
+	for _, id := range ids {
+		rem := remote[id]
+		e, ok := idx.Get(id)
+		if !ok {
+			e = index.Entry{ID: id, Key: rem.Key}
 		}
-		delete(remoteMap, e.ID)
+		e.ID, e.Key = id, rem.Key
+		e.RemoteETag = rem.ETag
 
-		if e.RemoteETag != rem.ETag || e.State == index.StateStale || e.State == index.StatePlaceholder {
-			idx.Update(e.ID, func(entry *index.Entry) {
+		st, sha := compareDoc(cfg.DocsDir, e, rem)
+		switch st {
+		case statusClean:
+			idx.Update(id, func(entry *index.Entry) {
+				entry.ID, entry.Key = id, rem.Key
+				entry.State = index.StateCached
+				entry.BaseETag = rem.ETag
 				entry.RemoteETag = rem.ETag
-				if entry.State == index.StateCached || entry.State == index.StatePlaceholder {
-					entry.State = index.StateStale
-				} else if entry.State == index.StateDirty {
-					entry.State = index.StateDiverged
-				}
+				entry.LocalSHA256 = sha
+				entry.Size = rem.Size
 			})
-
-			if e.State == index.StateDirty || e.State == index.StateDiverged {
-				if !force {
-					ui.PrintWarn("skipped diverged document (use --force to overwrite)", e.ID, nil)
-					skippedCount++
-					continue
-				}
+			continue
+		case statusDirty:
+			ui.PrintWarn("kept local changes (push to upload)", id, nil)
+			skipped++
+			continue
+		case statusDiverged:
+			if !force {
+				ui.PrintWarn("skipped diverged document (use --force to overwrite)", id, nil)
+				skipped++
+				continue
 			}
-
-			pullOne(e.ID, force, cfg, store, idx)
-			pulledCount++
+			backupFile(cfg.DocsDir, rem.Key)
 		}
+
+		if err := downloadDoc(e, cfg, store, idx); err != nil {
+			failed++
+			continue
+		}
+		pulled++
 	}
 
-	for id, rem := range remoteMap {
-		idx.Update(id, func(entry *index.Entry) {
-			entry.ID = id
-			entry.Key = rem.Key
-			entry.State = index.StateStale
-			entry.RemoteETag = rem.ETag
-			entry.Size = 0
-		})
-		pullOne(id, force, cfg, store, idx)
-		pulledCount++
+	if failed > 0 {
+		ui.PrintErr("some documents failed to download", fmt.Sprintf("%d failed", failed), nil)
 	}
-
-	if pulledCount == 0 && skippedCount == 0 {
+	if pulled == 0 && skipped == 0 && failed == 0 {
 		ui.PrintOk("everything up to date", "", nil)
 	}
+	return failed
 }
 
 func backupFile(docsDir, key string) {
