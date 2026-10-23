@@ -67,6 +67,8 @@ func main() {
 	rootCmd.AddCommand(pushCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(deleteCmd)
+	mvCmd.Flags().Bool("force", false, "move even if the document diverged from remote")
+	rootCmd.AddCommand(mvCmd)
 	rootCmd.AddCommand(serveCmd)
 	daemonInstallCmd.Flags().Bool("no-sudo", false, "skip privileged setup (port 80 binding)")
 	daemonUninstallCmd.Flags().Bool("clean-system", false, "clean up privileged settings (/etc/hosts, sysctl)")
