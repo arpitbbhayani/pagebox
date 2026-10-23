@@ -113,7 +113,7 @@ if [ "$VERSION" = "latest" ]; then
 fi
 
 if [ -z "$VERSION" ]; then
-  VERSION="0.1.3"
+  VERSION="0.1.4"
 fi
 
 BINARY_EXT=""

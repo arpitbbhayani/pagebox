@@ -31,7 +31,7 @@ var version = func() string {
 	if v != "" {
 		return v
 	}
-	return "0.1.3"
+	return "0.1.4"
 }()
 
 const (
