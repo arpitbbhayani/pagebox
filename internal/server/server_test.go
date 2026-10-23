@@ -857,3 +857,15 @@ func TestAPIFetchAndLazyLoad(t *testing.T) {
 	}
 }
 
+
+func TestRenderMarkdownStandalone(t *testing.T) {
+	out := RenderMarkdownStandalone("doc", "---\ntitle: Hi\n---\n\n$x^2$\n\n```mermaid\ngraph TD; A-->B\n```\n")
+	if strings.Contains(out, "/_pagebox/assets/marked.min.js") {
+		t.Fatal("standalone page must not reference the local marked asset")
+	}
+	for _, want := range []string{"marked", "raw-markdown", "Hi", "graph TD"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+}

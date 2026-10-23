@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +53,45 @@ func (s *s3Backend) fullKey(key string) string {
 	return key
 }
 
+// RenderMarkdown, when set, turns a markdown document into a self-contained
+// HTML page. The S3 backend uploads that page next to every markdown object
+// so static hosts serve rendered HTML rather than raw markdown.
+var RenderMarkdown func(id, content string) string
+
+func isMarkdownKey(key string) bool {
+	lower := strings.ToLower(key)
+	return strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".markdown")
+}
+
+// renderedKey returns the key of the rendered HTML sibling of a markdown key.
+func renderedKey(key string) string {
+	return index.TrimDocExt(key) + ".html"
+}
+
 func (s *s3Backend) Put(ctx context.Context, key string, body io.Reader, size int64, etag string) (string, error) {
+	var rendered []byte
+	if isMarkdownKey(key) && RenderMarkdown != nil {
+		src, err := io.ReadAll(body)
+		if err != nil {
+			return "", err
+		}
+		body = bytes.NewReader(src)
+		rendered = []byte(RenderMarkdown(index.TrimDocExt(key), string(src)))
+	}
+
+	newEtag, err := s.put(ctx, key, body, etag)
+	if err != nil || rendered == nil {
+		return newEtag, err
+	}
+
+	// Best effort: the markdown source is already safely stored.
+	if _, err := s.put(ctx, renderedKey(key), bytes.NewReader(rendered), Overwrite); err != nil {
+		log.Printf("failed to upload rendered page for %s: %v", key, err)
+	}
+	return newEtag, nil
+}
+
+func (s *s3Backend) put(ctx context.Context, key string, body io.Reader, etag string) (string, error) {
 	input := &s3.PutObjectInput{
 		Bucket: &s.bucket,
 		Key:    aws.String(s.fullKey(key)),
@@ -65,12 +105,14 @@ func (s *s3Backend) Put(ctx context.Context, key string, body io.Reader, size in
 	} else if strings.HasSuffix(lowerKey, ".txt") {
 		contentType := "text/plain; charset=utf-8"
 		input.ContentType = &contentType
-	} else if strings.HasSuffix(lowerKey, ".md") || strings.HasSuffix(lowerKey, ".markdown") {
+	} else if isMarkdownKey(key) {
 		contentType := "text/markdown; charset=utf-8"
 		input.ContentType = &contentType
 	}
 
-	if etag != "" {
+	if etag == Overwrite {
+		// Unconditional write.
+	} else if etag != "" {
 		// S3 If-Match requires double quotes for ETag in some cases, aws sdk generally handles it, but let's be careful
 		if !strings.HasPrefix(etag, `"`) {
 			etag = `"` + etag + `"`
@@ -144,6 +186,13 @@ func (s *s3Backend) Delete(ctx context.Context, key string) error {
 		Bucket: &s.bucket,
 		Key:    aws.String(full),
 	})
+	if err == nil && isMarkdownKey(key) {
+		// The rendered page is derived, so it is removed rather than trashed.
+		_, _ = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: &s.bucket,
+			Key:    aws.String(s.fullKey(renderedKey(key))),
+		})
+	}
 	return err
 }
 
@@ -186,7 +235,28 @@ func (s *s3Backend) List(ctx context.Context) ([]Object, error) {
 			})
 		}
 	}
-	return objects, nil
+	return hideRenderedPages(objects), nil
+}
+
+// hideRenderedPages drops generated <id>.html objects whose markdown source is
+// also present, so they never surface as separate documents.
+func hideRenderedPages(objects []Object) []Object {
+	sources := make(map[string]bool)
+	for _, o := range objects {
+		if isMarkdownKey(o.Key) {
+			sources[index.TrimDocExt(o.Key)+".html"] = true
+		}
+	}
+	if len(sources) == 0 {
+		return objects
+	}
+	out := objects[:0]
+	for _, o := range objects {
+		if !sources[o.Key] {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 type localBackend struct {

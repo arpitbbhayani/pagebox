@@ -111,3 +111,9 @@ func TestStoreExcludesIgnoredDocs(t *testing.T) {
 		t.Errorf("expected store to filter out corrupt robots/index on load, got %v", entries3)
 	}
 }
+
+func TestIsIgnoredDocTempFiles(t *testing.T) {
+	if !IsIgnoredDoc("a.html.pagebox-tmp", "a.html.pagebox-tmp") {
+		t.Fatal("pull temp files must be ignored")
+	}
+}

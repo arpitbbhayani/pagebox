@@ -10,6 +10,7 @@ import (
 
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
 	"github.com/arpitbhayani/pagebox/internal/index"
+	"github.com/arpitbhayani/pagebox/internal/storage"
 )
 
 // GenerateIndexHTML generates the static HTML for index.html using the Array UI design system.
@@ -492,4 +493,8 @@ func WriteIndexFile(cfg pbconfig.Config, idx *index.Store) error {
 	}
 
 	return os.Rename(tmpPath, indexPath)
+}
+
+func init() {
+	storage.RenderMarkdown = RenderMarkdownStandalone
 }

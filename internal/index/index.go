@@ -196,7 +196,8 @@ func IsIgnoredDoc(id, key string) bool {
 			lower == "robots.txt" || strings.HasSuffix(lower, "/robots.txt") ||
 			lower == "index" || strings.HasSuffix(lower, "/index") ||
 			lower == "robots" || strings.HasSuffix(lower, "/robots") ||
-			lower == "_trash" || strings.HasPrefix(lower, "_trash/") {
+			lower == "_trash" || strings.HasPrefix(lower, "_trash/") ||
+			strings.HasSuffix(lower, ".pagebox-tmp") {
 			return true
 		}
 		parts := strings.Split(s, "/")

@@ -832,7 +832,17 @@ func (s *Server) serveMarkdownRenderer(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	meta, cleanMarkdown := parseFrontmatter(string(content))
+	w.Write([]byte(renderMarkdownPage(id, string(content), false)))
+}
+
+// RenderMarkdownStandalone renders a markdown document into a self-contained
+// HTML page (marked is inlined) suitable for hosting on static storage.
+func RenderMarkdownStandalone(id, content string) string {
+	return renderMarkdownPage(id, content, true)
+}
+
+func renderMarkdownPage(id, content string, standalone bool) string {
+	meta, cleanMarkdown := parseFrontmatter(content)
 
 	docTitle := id
 	if t, ok := meta["title"]; ok && strings.TrimSpace(t) != "" {
@@ -852,6 +862,11 @@ func (s *Server) serveMarkdownRenderer(w http.ResponseWriter, r *http.Request, i
 
 	escapedScript := escapeScriptContent(cleanMarkdown)
 	escapedTitle := html.EscapeString(docTitle)
+
+	markedTag := `<script src="/_pagebox/assets/marked.min.js"></script>`
+	if standalone {
+		markedTag = "<script>" + strings.ReplaceAll(string(markedJS), "</script", "<\\/script") + "</script>"
+	}
 
 	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
@@ -1254,7 +1269,7 @@ html, body {
 	}
 }
 </style>
-<script src="/_pagebox/assets/marked.min.js"></script>
+%s
 </head>
 <body>
 <div class="aui-doc-layout">
@@ -1585,11 +1600,12 @@ html, body {
 		metaDescTag,
 		escapedTitle,
 		sharedCSS(),
+		markedTag,
 		headerHTML,
 		escapedScript,
 	)
 
-	w.Write([]byte(htmlContent))
+	return htmlContent
 }
 
 func escapeScriptContent(s string) string {

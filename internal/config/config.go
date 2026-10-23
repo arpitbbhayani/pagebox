@@ -64,7 +64,21 @@ func Load() (Config, error) {
 	}
 
 	_, err = toml.DecodeFile(path, &cfg)
+	cfg.DocsDir = expandHome(cfg.DocsDir)
 	return cfg, err
+}
+
+// expandHome resolves a leading "~" so a docs_dir of "~/pagebox" does not
+// become a literal "~" directory relative to the working directory.
+func expandHome(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(home, strings.TrimPrefix(p, "~"))
 }
 
 func Save(cfg Config) error {

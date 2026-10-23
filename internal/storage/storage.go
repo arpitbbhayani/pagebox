@@ -12,6 +12,9 @@ type Storage interface {
 	List(ctx context.Context) ([]Object, error)
 }
 
+// Overwrite, passed as the etag to Put, writes unconditionally.
+const Overwrite = "*"
+
 type Object struct {
 	Key  string
 	ETag string
