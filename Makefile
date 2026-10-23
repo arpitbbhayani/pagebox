@@ -1,4 +1,4 @@
-.PHONY: all build test dist publish clean help
+.PHONY: all build test dist publish update clean help
 
 VERSION ?= $(shell cat VERSION 2>/dev/null | tr -d ' \r\n')
 # Support 'make publish 0.2.0' where target argument is passed as next goal
@@ -15,12 +15,16 @@ endif
 CLEAN_VERSION := $(patsubst v%,%,$(TARGET_VERSION))
 LDFLAGS := -s -w -X main.version=$(CLEAN_VERSION)
 
+# Where 'make update' installs the locally built binary: the pagebox already on PATH, else ~/.local/bin.
+INSTALL_PATH ?= $(shell command -v pagebox 2>/dev/null || echo $(HOME)/.local/bin/pagebox)
+
 all: build
 
 help:
 	@echo "pagebox make targets:"
 	@echo "  make build             - build pagebox binary for current platform"
 	@echo "  make test              - run go test suite"
+	@echo "  make update            - build locally and replace the installed pagebox binary"
 	@echo "  make dist              - compile cross-platform release binaries into dist/"
 	@echo "  make publish <version> - bump VERSION, build dist binaries, commit and tag"
 	@echo "  make clean             - remove build artifacts"
@@ -29,6 +33,16 @@ build:
 	@echo "Building pagebox for local system..."
 	go build -trimpath -ldflags="$(LDFLAGS)" -o pagebox ./cmd/pagebox
 	@echo "Built ./pagebox ($$(du -h pagebox | cut -f1))"
+
+# Like 'pagebox update', but installs the binary built from this checkout instead of a GitHub release.
+update:
+	@echo "Building pagebox $(CLEAN_VERSION) from local sources..."
+	@mkdir -p "$(dir $(INSTALL_PATH))"
+	go build -trimpath -ldflags="$(LDFLAGS)" -o "$(INSTALL_PATH).new" ./cmd/pagebox
+	chmod 0755 "$(INSTALL_PATH).new"
+	mv -f "$(INSTALL_PATH).new" "$(INSTALL_PATH)"
+	@echo "Installed $(INSTALL_PATH) ($$("$(INSTALL_PATH)" version))"
+	@echo "Restart any running 'pagebox serve' or daemon to pick up the new binary."
 
 test:
 	go test -v ./...
