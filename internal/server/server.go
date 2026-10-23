@@ -1239,6 +1239,15 @@ html, body {
 	margin: 20px 0;
 }
 
+.pb-mermaid {
+	display: flex;
+	justify-content: center;
+	margin: 20px 0;
+	overflow-x: auto;
+}
+.pb-mermaid svg { max-width: 100%%; height: auto; }
+.pb-math-wrap { margin: 16px 0; overflow-x: auto; text-align: center; }
+
 @media (max-width: 768px) {
 	.aui-doc-layout {
 		padding: 24px 16px 64px;
@@ -1282,6 +1291,7 @@ html, body {
 				gfm: true,
 				breaks: false
 			});
+			registerMathExtension();
 			bodyEl.innerHTML = marked.parse(raw);
 		} else {
 			// Fallback if marked is loading or unavailable
@@ -1290,6 +1300,7 @@ html, body {
 				.then(function(txt) {
 					var clean = txt.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
 					if (typeof marked !== 'undefined') {
+						registerMathExtension();
 						bodyEl.innerHTML = marked.parse(clean);
 					} else {
 						bodyEl.innerHTML = '<pre><code>' + clean.replace(/[&<>'"]/g, function(c) {
@@ -1307,9 +1318,141 @@ html, body {
 		enhanceProse();
 	}
 
+	// ---- LaTeX (KaTeX) and Mermaid, both loaded lazily from a CDN ----
+	var KATEX_BASE = 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/';
+	var MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.esm.min.mjs';
+
+	function escapeHTML(t) {
+		return t.replace(/[&<>"']/g, function(c) {
+			return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+		});
+	}
+
+	var mathRegistered = false;
+	function registerMathExtension() {
+		if (mathRegistered || typeof marked === 'undefined' || !marked.use) return;
+		mathRegistered = true;
+		function mathHTML(tex, display) {
+			return '<span class="pb-math' + (display ? ' pb-math-display' : '') + '" data-tex="' +
+				escapeHTML(tex) + '" data-display="' + (display ? '1' : '0') + '">' +
+				escapeHTML(display ? '$$' + tex + '$$' : '$' + tex + '$') + '</span>';
+		}
+		marked.use({
+			extensions: [
+				{
+					name: 'mathBlock',
+					level: 'block',
+					start: function(src) {
+						var m = src.match(/\$\$|\\\[/);
+						return m ? m.index : undefined;
+					},
+					tokenizer: function(src) {
+						var m = /^(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])[ \t]*(?:\n|$)/.exec(src);
+						if (m) return { type: 'mathBlock', raw: m[0], text: (m[1] || m[2]).trim() };
+					},
+					renderer: function(tok) { return '<div class="pb-math-wrap">' + mathHTML(tok.text, true) + '</div>\n'; }
+				},
+				{
+					name: 'mathInline',
+					level: 'inline',
+					start: function(src) {
+						var m = src.match(/\$|\\\(/);
+						return m ? m.index : undefined;
+					},
+					tokenizer: function(src) {
+						var m = /^\$\$([^\n]+?)\$\$/.exec(src) ||
+							/^\\\(([\s\S]+?)\\\)/.exec(src) ||
+							/^\$(?![\s$])((?:\\.|[^\\$\n])+?)(?<![\s\\])\$(?!\d)/.exec(src);
+						if (m) return { type: 'mathInline', raw: m[0], text: m[1].trim(), display: m[0].indexOf('$$') === 0 };
+					},
+					renderer: function(tok) { return mathHTML(tok.text, tok.display); }
+				}
+			]
+		});
+	}
+
+	var katexPromise = null;
+	function loadKatex() {
+		if (window.katex) return Promise.resolve(window.katex);
+		if (katexPromise) return katexPromise;
+		katexPromise = new Promise(function(resolve, reject) {
+			var css = document.createElement('link');
+			css.rel = 'stylesheet';
+			css.href = KATEX_BASE + 'katex.min.css';
+			document.head.appendChild(css);
+			var js = document.createElement('script');
+			js.src = KATEX_BASE + 'katex.min.js';
+			js.onload = function() { resolve(window.katex); };
+			js.onerror = function() { katexPromise = null; reject(new Error('KaTeX failed to load')); };
+			document.head.appendChild(js);
+		});
+		return katexPromise;
+	}
+
+	function renderMath(root) {
+		var nodes = root.querySelectorAll('.pb-math');
+		if (!nodes.length) return;
+		loadKatex().then(function(katex) {
+			nodes.forEach(function(el) {
+				try {
+					katex.render(el.getAttribute('data-tex'), el, {
+						displayMode: el.getAttribute('data-display') === '1',
+						throwOnError: false
+					});
+				} catch (e) {}
+			});
+		}).catch(function() {});
+	}
+
+	var mermaidPromise = null;
+	function loadMermaid() {
+		if (!mermaidPromise) {
+			mermaidPromise = import(MERMAID_URL).then(function(m) { return m.default; })
+				.catch(function(e) { mermaidPromise = null; throw e; });
+		}
+		return mermaidPromise;
+	}
+
+	var mermaidCount = 0;
+	function renderMermaid(root) {
+		var blocks = root.querySelectorAll('pre > code.language-mermaid');
+		blocks.forEach(function(code) {
+			var pre = code.parentElement;
+			var holder = document.createElement('div');
+			holder.className = 'pb-mermaid';
+			holder.setAttribute('data-src', code.textContent);
+			pre.parentElement.replaceChild(holder, pre);
+		});
+		drawMermaid();
+	}
+
+	function drawMermaid() {
+		var holders = document.querySelectorAll('.pb-mermaid');
+		if (!holders.length) return;
+		loadMermaid().then(function(mermaid) {
+			var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+			mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
+			holders.forEach(function(h) {
+				var src = h.getAttribute('data-src');
+				mermaid.render('pb-mermaid-' + (mermaidCount++), src).then(function(res) {
+					h.innerHTML = res.svg;
+				}).catch(function(err) {
+					h.innerHTML = '<pre><code>' + escapeHTML(src) + '</code></pre>';
+				});
+			});
+		}).catch(function() {
+			holders.forEach(function(h) {
+				h.innerHTML = '<pre><code>' + escapeHTML(h.getAttribute('data-src')) + '</code></pre>';
+			});
+		});
+	}
+
 	function enhanceProse() {
 		var contentEl = document.getElementById('content');
 		if (!contentEl) return;
+
+		renderMath(contentEl);
+		renderMermaid(contentEl);
 
 		// Extract first h1 as document title if not set
 		var h1 = contentEl.querySelector('h1');
@@ -1426,6 +1569,7 @@ html, body {
 				var theme = document.documentElement.getAttribute('data-theme');
 				if (theme) {
 					localStorage.setItem('aui-theme', theme);
+					drawMermaid();
 				}
 			}
 		});
