@@ -13,7 +13,6 @@ import (
 	
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
 	"github.com/arpitbhayani/pagebox/internal/index"
-	"github.com/arpitbhayani/pagebox/internal/server"
 	"github.com/arpitbhayani/pagebox/internal/storage"
 	"github.com/arpitbhayani/pagebox/internal/ui"
 )
@@ -262,7 +261,7 @@ var deleteCmd = &cobra.Command{
 		localPath := filepath.Join(cfg.DocsDir, filepath.FromSlash(entry.Key))
 		os.Remove(localPath)
 
-		_ = server.WriteIndexFile(cfg, idx)
+		updateAndPushIndexHTML(cfg, store, idx)
 
 		sp.Stop(true)
 		ui.PrintOk("deleted", id, nil)

@@ -14,7 +14,6 @@ import (
 
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
 	"github.com/arpitbhayani/pagebox/internal/index"
-	"github.com/arpitbhayani/pagebox/internal/server"
 	"github.com/arpitbhayani/pagebox/internal/storage"
 	"github.com/arpitbhayani/pagebox/internal/ui"
 )
@@ -69,9 +68,7 @@ moved to _trash.`,
 			ui.PrintOk("moved", fmt.Sprintf("%s → %s", m.from.Key, m.toKey), nil)
 		}
 
-		if err := server.WriteIndexFile(cfg, idx); err != nil {
-			ui.PrintWarn("failed to update index.html", err.Error(), nil)
-		}
+		updateAndPushIndexHTML(cfg, store, idx)
 		if failed > 0 {
 			os.Exit(2)
 		}

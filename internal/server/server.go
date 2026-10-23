@@ -375,12 +375,24 @@ func (s *Server) serveDocumentViewer(w http.ResponseWriter, r *http.Request, id 
 		}
 	}
 
-	escapedID := html.EscapeString(displayTitle)
 	rawURL := "/" + escapeURLPath(id) + "?raw=1"
 	frameURL := rawURL
 	if isMarkdown {
 		frameURL = "/" + escapeURLPath(id) + "?render=1"
 	}
+
+	pill := fmt.Sprintf(`<span class="aui-pill aui-pill-%s">
+				<span class="aui-pill-dot"></span>
+				<span>%s</span>
+			</span>`, html.EscapeString(state), html.EscapeString(state))
+
+	w.Write([]byte(renderViewerPage(id, displayTitle, pill, rawURL, `src="`+html.EscapeString(frameURL)+`"`)))
+}
+
+// renderViewerPage builds the viewer shell (the /pagebox header bar, theme toggle and
+// framed document). frameAttr is the iframe's src="..." or srcdoc="..." attribute.
+func renderViewerPage(id, displayTitle, pillHTML, rawURL, frameAttr string) string {
+	escapedID := html.EscapeString(displayTitle)
 	breadcrumbs := renderBreadcrumbs(id, displayTitle)
 
 	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
@@ -572,10 +584,7 @@ html, body {
 			%s
 		</div>
 		<div class="aui-header-right">
-			<span class="aui-pill aui-pill-%s">
-				<span class="aui-pill-dot"></span>
-				<span>%s</span>
-			</span>
+			%s
 			<a href="%s" target="_blank" class="aui-raw-btn" title="Open raw document in new tab">raw ↗</a>
 			<button id="theme-btn" class="aui-theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
 				<svg class="aui-icon-sun" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -602,7 +611,7 @@ html, body {
 			<span class="aui-loader-spinner"></span>
 			<span>Streaming document...</span>
 		</div>
-		<iframe id="doc-frame" class="aui-doc-iframe" src="%s" title="%s" onload="onFrameLoaded(this)"></iframe>
+		<iframe id="doc-frame" class="aui-doc-iframe" %s title="%s" onload="onFrameLoaded(this)"></iframe>
 	</div>
 </div>
 
@@ -753,14 +762,13 @@ html, body {
 		escapedID,
 		sharedCSS(),
 		breadcrumbs,
-		html.EscapeString(state),
-		html.EscapeString(state),
+		pillHTML,
 		rawURL,
-		frameURL,
+		frameAttr,
 		escapedID,
 	)
 
-	w.Write([]byte(htmlContent))
+	return htmlContent
 }
 
 func parseFrontmatter(content string) (map[string]string, string) {
@@ -836,9 +844,17 @@ func (s *Server) serveMarkdownRenderer(w http.ResponseWriter, r *http.Request, i
 }
 
 // RenderMarkdownStandalone renders a markdown document into a self-contained
-// HTML page (marked is inlined) suitable for hosting on static storage.
+// HTML page suitable for static hosting: the same viewer shell as the local server
+// (header bar, theme toggle) around the rendered document, with marked inlined.
 func RenderMarkdownStandalone(id, content string) string {
-	return renderMarkdownPage(id, content, true)
+	displayTitle := id
+	meta, _ := parseFrontmatter(content)
+	if t, ok := meta["title"]; ok && strings.TrimSpace(t) != "" {
+		displayTitle = strings.TrimSpace(t)
+	}
+	inner := renderMarkdownPage(id, content, true)
+	rawURL := "/" + escapeURLPath(id) + ".md"
+	return renderViewerPage(id, displayTitle, "", rawURL, `srcdoc="`+html.EscapeString(inner)+`"`)
 }
 
 func renderMarkdownPage(id, content string, standalone bool) string {
