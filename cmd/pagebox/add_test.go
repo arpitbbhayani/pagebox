@@ -460,3 +460,22 @@ func TestPageboxAddUploadsToS3IfConfigured(t *testing.T) {
 		t.Errorf("expected BaseETag 'mock-etag-123', got '%s'", entry.BaseETag)
 	}
 }
+
+func TestSymlinkToDocsDirRefusesToReplaceRealDir(t *testing.T) {
+	docs := t.TempDir()
+	src := t.TempDir()
+	name := filepath.Base(src)
+	if err := os.MkdirAll(filepath.Join(docs, name), 0755); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(docs, name, "keep.md")
+	if err := os.WriteFile(keep, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := symlinkToDocsDir(docs, src); err == nil {
+		t.Fatal("expected an error")
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("existing document was deleted: %v", err)
+	}
+}

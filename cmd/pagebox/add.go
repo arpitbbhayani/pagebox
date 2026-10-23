@@ -21,8 +21,12 @@ import (
 
 var addCmd = &cobra.Command{
 	Use:   "add [path...]",
-	Short: "Add files in configured directory to the index",
-	Long:  "Checks the configured docs directory (not the current working directory) for untracked and modified files, adding them to the index ready for push.",
+	Short: "Add files or directories to the index",
+	Long: `Checks the configured docs directory (not the current working directory) for untracked and modified files, adding them to the index ready for push.
+
+Each path may be a file or a directory. A directory is added recursively (hidden files are skipped), and
+keeps its layout, so 'notes/sub/b.html' becomes the document 'notes/sub/b'. Paths outside the docs
+directory are symlinked into it first.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := pbconfig.Load()
 		if err != nil {
@@ -183,7 +187,8 @@ func symlinkToDocsDir(docsDir, srcPath string) (string, error) {
 				_ = os.Remove(destPath)
 			}
 		} else {
-			_ = os.RemoveAll(destPath)
+			// Never delete real documents to make room for a link.
+			return "", fmt.Errorf("%s already exists in the docs directory and is not a symlink; rename or move it first", name)
 		}
 	}
 
