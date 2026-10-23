@@ -869,3 +869,16 @@ func TestRenderMarkdownStandalone(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderBreadcrumbsDoesNotRepeatFolders(t *testing.T) {
+	out := renderBreadcrumbs("wired/FINAL_REPORT", "wired/FINAL_REPORT")
+	if strings.Count(out, "wired") != 1 {
+		t.Fatalf("folder repeated: %s", out)
+	}
+	if !strings.Contains(out, ">FINAL_REPORT<") {
+		t.Fatalf("missing leaf label: %s", out)
+	}
+	if got := renderBreadcrumbs("wired/FINAL_REPORT", "Final Report"); !strings.Contains(got, ">Final Report<") {
+		t.Fatalf("custom title lost: %s", got)
+	}
+}

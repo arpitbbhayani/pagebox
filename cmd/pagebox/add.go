@@ -83,6 +83,10 @@ directory are symlinked into it first.`,
 
 			entry, exists := idx.Get(id)
 			if !exists {
+				if other, clash := index.FolderConflict(id, entryIDs(idx.List())); clash {
+					ui.PrintWarn(fmt.Sprintf("skipped '%s'", rel), fmt.Sprintf("a file and a folder cannot share the name '%s' (conflicts with '%s')", conflictName(id, other), other), nil)
+					continue
+				}
 				// Untracked -> Add as StateNew
 				_ = idx.Update(id, func(e *index.Entry) {
 					e.ID = id
@@ -373,4 +377,20 @@ func computeFileHash(path string) (string, int64, error) {
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), stat.Size(), nil
+}
+
+func entryIDs(entries []index.Entry) []string {
+	ids := make([]string, len(entries))
+	for i, e := range entries {
+		ids[i] = e.ID
+	}
+	return ids
+}
+
+// conflictName is the shared file/folder name behind a FolderConflict between id and other.
+func conflictName(id, other string) string {
+	if strings.HasPrefix(id, other+"/") {
+		return other
+	}
+	return id
 }

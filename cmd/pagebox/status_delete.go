@@ -2,15 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
-	
+
 	"github.com/spf13/cobra"
-	
+
 	pbconfig "github.com/arpitbhayani/pagebox/internal/config"
 	"github.com/arpitbhayani/pagebox/internal/index"
 	"github.com/arpitbhayani/pagebox/internal/storage"
@@ -212,27 +213,44 @@ var statusCmd = &cobra.Command{
 }
 
 var deleteCmd = &cobra.Command{
-	Use:   "delete <id>",
-	Short: "Explicitly delete a document from S3 and locally",
-	Args:  cobra.ExactArgs(1),
+	Use:     "delete <id>...",
+	Aliases: []string{"rm"},
+	Short:   "Explicitly delete one or more documents from S3 and locally",
+	Long:    "Deletes each document locally and moves it to trash remotely. Ids that are not in the index are skipped silently.",
+	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		id := args[0]
-		
 		idx, err := index.NewStore()
 		if err != nil {
 			ui.PrintErr("failed to open index", err.Error(), nil)
 			os.Exit(1)
 		}
-		
-		entry, ok := idx.Get(id)
-		if !ok {
-			ui.PrintErr("document not found in index", id, nil)
-			os.Exit(1)
+
+		// Resolve every argument up front; unknown ids and duplicates are skipped silently.
+		var targets []index.Entry
+		seen := make(map[string]bool)
+		for _, id := range args {
+			entry, ok := idx.Get(id)
+			if !ok || seen[entry.ID] {
+				continue
+			}
+			seen[entry.ID] = true
+			targets = append(targets, entry)
+		}
+		if len(targets) == 0 {
+			return
 		}
 
-		ui.PrintWarn(fmt.Sprintf("this will permanently delete '%s' locally and move it to trash remotely", id), "", nil)
-		
-		confirmed, err := ui.Confirm(fmt.Sprintf("delete %s?", id), false)
+		names := make([]string, len(targets))
+		for i, e := range targets {
+			names[i] = e.ID
+		}
+		ui.PrintWarn(fmt.Sprintf("this will permanently delete %s locally and move it to trash remotely", quoteList(names)), "", nil)
+
+		question := fmt.Sprintf("delete %s?", names[0])
+		if len(names) > 1 {
+			question = fmt.Sprintf("delete %d documents?", len(names))
+		}
+		confirmed, err := ui.Confirm(question, false)
 		if err != nil || !confirmed {
 			if err != nil {
 				ui.PrintInfo("cancelled", err.Error(), nil)
@@ -245,25 +263,36 @@ var deleteCmd = &cobra.Command{
 		cfg, _ := pbconfig.Load()
 		store, _ := storage.New(cfg)
 
-		sp := ui.NewSpinner(fmt.Sprintf("Deleting %s", id))
-		
-		// Remove from remote (moves to _trash)
-		if err := store.Delete(context.Background(), entry.Key); err != nil {
-			sp.Stop(false)
-			ui.PrintErr("failed to delete from remote", err.Error(), nil)
-			os.Exit(2)
+		failed := 0
+		for _, entry := range targets {
+			sp := ui.NewSpinner(fmt.Sprintf("Deleting %s", entry.ID))
+
+			// Remove from remote (moves to _trash). A document already gone remotely is fine.
+			if err := store.Delete(context.Background(), entry.Key); err != nil && !errors.Is(err, storage.ErrNotFound) {
+				sp.Stop(false)
+				ui.PrintErr("failed to delete from remote", fmt.Sprintf("%s: %v", entry.ID, err), nil)
+				failed++
+				continue
+			}
+
+			idx.Delete(entry.ID)
+			os.Remove(filepath.Join(cfg.DocsDir, filepath.FromSlash(entry.Key)))
+
+			sp.Stop(true)
+			ui.PrintOk("deleted", entry.ID, nil)
 		}
 
-		// Remove from index
-		idx.Delete(id)
-
-		// Remove local file
-		localPath := filepath.Join(cfg.DocsDir, filepath.FromSlash(entry.Key))
-		os.Remove(localPath)
-
 		updateAndPushIndexHTML(cfg, store, idx)
-
-		sp.Stop(true)
-		ui.PrintOk("deleted", id, nil)
+		if failed > 0 {
+			os.Exit(2)
+		}
 	},
+}
+
+func quoteList(items []string) string {
+	quoted := make([]string, len(items))
+	for i, it := range items {
+		quoted[i] = "'" + it + "'"
+	}
+	return strings.Join(quoted, ", ")
 }

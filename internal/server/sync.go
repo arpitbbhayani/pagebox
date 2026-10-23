@@ -117,6 +117,19 @@ func (s *SyncLoop) handleFSEvent(event fsnotify.Event) {
 }
 
 func (s *SyncLoop) markDirtyAndSchedule(id, key string) {
+	// A new document may not share a name with a folder (or vice versa), ignoring extensions.
+	if _, tracked := s.idx.Get(id); !tracked {
+		entries := s.idx.List()
+		ids := make([]string, len(entries))
+		for i, e := range entries {
+			ids[i] = e.ID
+		}
+		if other, clash := index.FolderConflict(id, ids); clash {
+			log.Printf("ignoring %s: a file and a folder cannot share a name (conflicts with %s)", key, other)
+			return
+		}
+	}
+
 	currentHash := hashFile(filepath.Join(s.cfg.DocsDir, filepath.FromSlash(key)))
 	isDirty := false
 	s.idx.Update(id, func(e *index.Entry) {

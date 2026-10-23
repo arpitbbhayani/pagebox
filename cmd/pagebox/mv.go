@@ -186,6 +186,23 @@ func planMoves(entries []index.Entry, srcs []string, dst string, dstIsDir bool) 
 		seen[id] = true
 	}
 
+	// A document may not share a name with a folder, ignoring extensions.
+	var ids []string
+	for _, e := range entries {
+		if !moving[e.Key] {
+			ids = append(ids, index.TrimDocExt(e.Key))
+		}
+	}
+	for _, m := range moves {
+		ids = append(ids, index.TrimDocExt(m.toKey))
+	}
+	for _, m := range moves {
+		id := index.TrimDocExt(m.toKey)
+		if other, clash := index.FolderConflict(id, ids); clash {
+			return nil, fmt.Errorf("%s conflicts with %s: a file and a folder cannot share a name", m.toKey, other)
+		}
+	}
+
 	sort.Slice(moves, func(i, j int) bool { return moves[i].from.Key < moves[j].from.Key })
 	return moves, nil
 }

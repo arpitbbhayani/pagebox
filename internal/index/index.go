@@ -363,3 +363,18 @@ func (s *Store) Delete(id string) error {
 	}
 	return s.save()
 }
+
+// FolderConflict reports a document ID in others that clashes with id as a file
+// versus a folder of the same name once extensions are ignored: "notes" cannot
+// exist beside "notes/a", and "notes/a" cannot live under a document named "notes".
+func FolderConflict(id string, others []string) (string, bool) {
+	for _, o := range others {
+		if o == id {
+			continue
+		}
+		if strings.HasPrefix(id, o+"/") || strings.HasPrefix(o, id+"/") {
+			return o, true
+		}
+	}
+	return "", false
+}

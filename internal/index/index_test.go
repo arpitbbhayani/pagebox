@@ -117,3 +117,23 @@ func TestIsIgnoredDocTempFiles(t *testing.T) {
 		t.Fatal("pull temp files must be ignored")
 	}
 }
+
+func TestFolderConflict(t *testing.T) {
+	cases := []struct {
+		id     string
+		others []string
+		clash  bool
+	}{
+		{"notes", []string{"notes/a"}, true},
+		{"notes/a", []string{"notes"}, true},
+		{"notes/sub/b", []string{"notes"}, true},
+		{"notes", []string{"notes"}, false},
+		{"notes2", []string{"notes/a"}, false},
+		{"notes/a", []string{"notes/b", "other"}, false},
+	}
+	for _, c := range cases {
+		if _, got := FolderConflict(c.id, c.others); got != c.clash {
+			t.Errorf("FolderConflict(%q, %v) = %v, want %v", c.id, c.others, got, c.clash)
+		}
+	}
+}

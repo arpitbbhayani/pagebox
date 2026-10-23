@@ -450,17 +450,23 @@ html, body {
 	height: 100vh;
 }
 
+/* Same bar as the index page's .aui-navbar / .aui-nav-inner so the navbar never changes width */
 .aui-viewer-header {
-	height: 44px;
 	border-bottom: 1px solid var(--aui-border);
 	background: var(--aui-bg-card);
+	flex-shrink: 0;
+	z-index: 50;
+}
+
+.aui-viewer-header-inner {
+	max-width: 1080px;
+	margin: 0 auto;
+	padding: 0 24px;
+	height: 52px;
+	box-sizing: border-box;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 0 16px;
-	flex-shrink: 0;
-	box-sizing: border-box;
-	z-index: 50;
 }
 
 .aui-header-left {
@@ -556,7 +562,7 @@ html, body {
 .aui-frame-container {
 	flex: 1;
 	width: 100%%;
-	height: calc(100vh - 44px);
+	height: calc(100vh - 53px);
 	position: relative;
 	background: var(--aui-bg);
 }
@@ -574,6 +580,7 @@ html, body {
 <div class="aui-viewer">
 	<!-- Fixed Header: "/pagebox" with back arrow taking to index -->
 	<header class="aui-viewer-header">
+		<div class="aui-viewer-header-inner">
 		<div class="aui-header-left">
 			<a href="/" class="aui-back-link" title="Return to Index">
 				<span class="aui-back-arrow">←</span>
@@ -602,6 +609,7 @@ html, body {
 					<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
 				</svg>
 			</button>
+		</div>
 		</div>
 	</header>
 
@@ -2306,6 +2314,35 @@ body {
 	transition: all 0.15s ease;
 }
 
+.aui-copy-path-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-right: 6px;
+	padding: 4px 10px;
+	border-radius: 4px;
+	font-family: var(--aui-font-mono);
+	font-size: 12px;
+	line-height: inherit;
+	cursor: pointer;
+	color: var(--aui-text-muted);
+	background: var(--aui-bg-subtle);
+	border: 1px solid var(--aui-border);
+	transition: all 0.15s ease;
+}
+
+.aui-copy-path-btn:hover,
+.aui-copy-path-btn:focus-visible {
+	color: var(--aui-crimson);
+	border-color: var(--aui-crimson);
+	background: var(--aui-crimson-bg);
+}
+
+.aui-copy-path-btn.copied {
+	color: var(--aui-text);
+	border-color: var(--aui-text-faint);
+}
+
 .aui-action-btn:hover {
 	color: var(--aui-crimson);
 	border-color: var(--aui-crimson);
@@ -2347,6 +2384,11 @@ body {
 
 .aui-tr-folder:hover {
 	background: var(--aui-bg-hover) !important;
+}
+
+.aui-tr-folder:focus-visible {
+	outline: 2px solid var(--aui-crimson);
+	outline-offset: -2px;
 }
 
 .aui-folder-toggle {
@@ -2521,8 +2563,10 @@ func escapeURLPath(p string) string {
 
 func renderBreadcrumbs(id, title string) string {
 	parts := strings.Split(id, "/")
-	display := id
-	if title != "" {
+	// Without a real title the viewer passes the full id; the folders are already
+	// shown as breadcrumbs, so only the last segment is the label.
+	display := parts[len(parts)-1]
+	if title != "" && title != id {
 		display = title
 	}
 	if len(parts) <= 1 {
@@ -2638,6 +2682,13 @@ func sortTree(node *FileNode, docsDir string) {
 	}
 }
 
+// copyPathButton renders the button that copies a document or folder path, in the
+// form accepted by 'pagebox rm' and 'pagebox mv'.
+func copyPathButton(path string) string {
+	return fmt.Sprintf(`<button type="button" class="aui-copy-path-btn" data-path="%s" title="Copy path: %s" aria-label="Copy path">⧉ <span class="aui-copy-path-label">Copy path</span></button>`,
+		html.EscapeString(path), html.EscapeString(path))
+}
+
 func renderTreeRows(node *FileNode, sb *strings.Builder) {
 	for _, ch := range node.Children {
 		if ch.IsDir {
@@ -2650,10 +2701,10 @@ func renderTreeRows(node *FileNode, sb *strings.Builder) {
 				docPlural = "docs"
 			}
 			sb.WriteString(fmt.Sprintf(`
-		<tr class="aui-tr aui-tr-folder" data-folder-path="%s" data-parent-folder="%s" data-depth="%d" data-expanded="true">
+		<tr class="aui-tr aui-tr-folder" data-folder-path="%s" data-parent-folder="%s" data-depth="%d" data-expanded="false" aria-expanded="false" role="button" tabindex="0">
 			<td class="aui-td-doc" style="padding-left: %dpx;">
 				<span class="aui-folder-toggle">
-					<span class="aui-folder-caret">▾</span>
+					<span class="aui-folder-caret">▸</span>
 					<svg class="aui-folder-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
 					<span class="aui-folder-name">%s</span>
 					<span class="aui-folder-count">(%d %s)</span>
@@ -2664,7 +2715,7 @@ func renderTreeRows(node *FileNode, sb *strings.Builder) {
 			</td>
 			<td class="aui-td-size aui-mono">—</td>
 			<td class="aui-td-time aui-mono">—</td>
-			<td class="aui-td-action"></td>
+			<td class="aui-td-action">%s</td>
 		</tr>`,
 				escapedPath,
 				escapedParent,
@@ -2673,6 +2724,7 @@ func renderTreeRows(node *FileNode, sb *strings.Builder) {
 				escapedName,
 				ch.DocCount,
 				docPlural,
+				copyPathButton(ch.Path),
 			))
 			renderTreeRows(ch, sb)
 		} else {
@@ -2688,9 +2740,13 @@ func renderTreeRows(node *FileNode, sb *strings.Builder) {
 			sizeStr := formatBytes(e.Size)
 			timeStr := formatRelativeTime(e.LastSyncedAt)
 			padLeft := 16 + ch.Depth*22
+			copyPath := e.Key
+			if copyPath == "" {
+				copyPath = e.ID
+			}
 
 			sb.WriteString(fmt.Sprintf(`
-		<tr class="aui-tr aui-tr-file" data-id="%s" data-name="%s" data-state="%s" data-parent-folder="%s" data-depth="%d">
+		<tr class="aui-tr aui-tr-file" data-id="%s" data-name="%s" data-text="%s" data-state="%s" data-parent-folder="%s" data-depth="%d">
 			<td class="aui-td-doc" style="padding-left: %dpx;">
 				<a href="%s" class="aui-doc-link">
 					<svg class="aui-file-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
@@ -2706,11 +2762,13 @@ func renderTreeRows(node *FileNode, sb *strings.Builder) {
 			<td class="aui-td-size aui-mono">%s</td>
 			<td class="aui-td-time aui-mono">%s</td>
 			<td class="aui-td-action">
+				%s
 				<a href="%s" class="aui-action-btn">Open →</a>
 			</td>
 		</tr>`,
 				escapedID,
 				escapedName,
+				escapedID,
 				html.EscapeString(state),
 				escapedParent,
 				ch.Depth,
@@ -2721,6 +2779,7 @@ func renderTreeRows(node *FileNode, sb *strings.Builder) {
 				html.EscapeString(state),
 				html.EscapeString(sizeStr),
 				html.EscapeString(timeStr),
+				copyPathButton(copyPath),
 				urlPath,
 			))
 		}

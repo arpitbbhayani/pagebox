@@ -54,3 +54,18 @@ func TestPlanMoves(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanMovesRejectsFileFolderNameClash(t *testing.T) {
+	entries := []index.Entry{
+		{ID: "notes/a", Key: "notes/a.md"},
+		{ID: "draft", Key: "draft.md"},
+	}
+	// "notes.html" would sit beside the folder "notes".
+	if _, err := planMoves(entries, []string{"draft"}, "notes.html", false); err == nil {
+		t.Fatal("expected a clash with folder notes")
+	}
+	// "notes/a.md/x.md" would put a folder where a document exists.
+	if _, err := planMoves(entries, []string{"draft"}, "notes/a/x.md", false); err == nil {
+		t.Fatal("expected a clash with document notes/a")
+	}
+}

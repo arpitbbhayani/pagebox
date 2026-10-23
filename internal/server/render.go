@@ -230,7 +230,7 @@ func GenerateIndexHTML(cfg pbconfig.Config, idx *index.Store) string {
 		});
 	}
 
-	// Filter and Search logic with Folder Tree support
+	// Filter, search and collapsible folder tree
 	var searchInput = document.getElementById('search-input');
 	var filterBtns = document.querySelectorAll('.aui-filter-btn');
 	var tbody = document.getElementById('doc-tbody');
@@ -239,112 +239,106 @@ func GenerateIndexHTML(cfg pbconfig.Config, idx *index.Store) string {
 	var emptyState = document.getElementById('empty-state');
 
 	var activeFilter = 'all';
+	// Folders start collapsed; only the ones the user opened are remembered.
+	var STORE_KEY = 'pagebox-expanded-folders';
+	var expanded = new Set();
+	try {
+		JSON.parse(localStorage.getItem(STORE_KEY) || '[]').forEach(function(p) { expanded.add(p); });
+	} catch (_) {}
+
+	function isCollapsed(path) { return !expanded.has(path); }
+
+	function saveExpanded() {
+		try { localStorage.setItem(STORE_KEY, JSON.stringify(Array.from(expanded))); } catch (_) {}
+	}
+
+	// True when any ancestor folder (starting at the given parent path) is collapsed
+	function hiddenByAncestor(parentPath) {
+		if (!parentPath) return false;
+		var parts = parentPath.split('/');
+		var cur = '';
+		for (var i = 0; i < parts.length; i++) {
+			cur = cur ? (cur + '/' + parts[i]) : parts[i];
+			if (isCollapsed(cur)) return true;
+		}
+		return false;
+	}
 
 	function applyFilters() {
 		var term = (searchInput ? searchInput.value : '').toLowerCase().trim();
+		var searching = !!term || activeFilter !== 'all';
 		var visibleCount = 0;
-		var filterFolders = new Set();
+		var matchedFolders = new Set();
 
+		// While searching or filtering, matches are always shown, so collapsed folders are ignored.
 		fileRows.forEach(function(row) {
 			var text = (row.getAttribute('data-text') || '').toLowerCase();
 			var state = (row.getAttribute('data-state') || '').toLowerCase();
-			var folderPath = row.getAttribute('data-folder-path') || '';
+			var parent = row.getAttribute('data-parent-folder') || '';
 
-			var matchesFilter = (activeFilter === 'all') || (state === activeFilter);
-			var matchesSearch = (!term) || (text.indexOf(term) !== -1);
+			var matches = (activeFilter === 'all' || state === activeFilter) &&
+				(!term || text.indexOf(term) !== -1);
+			var show = matches && (searching || !hiddenByAncestor(parent));
 
-			if (matchesFilter && matchesSearch) {
-				row.style.display = '';
+			row.style.display = show ? '' : 'none';
+			if (matches) {
 				visibleCount++;
-				if (folderPath) {
-					var parts = folderPath.split('/');
-					var accum = '';
+				if (parent) {
+					var parts = parent.split('/');
+					var acc = '';
 					for (var i = 0; i < parts.length; i++) {
-						accum = accum ? (accum + '/' + parts[i]) : parts[i];
-						filterFolders.add(accum);
+						acc = acc ? (acc + '/' + parts[i]) : parts[i];
+						matchedFolders.add(acc);
 					}
 				}
-			} else {
-				row.style.display = 'none';
 			}
 		});
 
-		// Manage collapsed states and visibility of folder rows
-		var collapsed = new Set();
 		folderRows.forEach(function(fRow) {
-			var fPath = fRow.getAttribute('data-folder-path');
-			var isExp = fRow.getAttribute('data-expanded') !== 'false';
-			if (!isExp) {
-				collapsed.add(fPath);
-			}
+			var path = fRow.getAttribute('data-folder-path');
+			var parent = fRow.getAttribute('data-parent-folder') || '';
+			var show = searching ? matchedFolders.has(path) : !hiddenByAncestor(parent);
+			fRow.style.display = show ? '' : 'none';
+
+			var open = searching ? true : !isCollapsed(path);
+			fRow.setAttribute('data-expanded', open ? 'true' : 'false');
+			fRow.setAttribute('aria-expanded', open ? 'true' : 'false');
+			var caret = fRow.querySelector('.aui-folder-caret');
+			if (caret) caret.textContent = open ? '▾' : '▸';
 		});
 
-		// Hide children of collapsed folders
-		fileRows.forEach(function(row) {
-			if (row.style.display === 'none') return;
-			var fPath = row.getAttribute('data-folder-path');
-			if (fPath) {
-				var parts = fPath.split('/');
-				var cur = '';
-				for (var i = 0; i < parts.length; i++) {
-					cur = cur ? (cur + '/' + parts[i]) : parts[i];
-					if (collapsed.has(cur)) {
-						row.style.display = 'none';
-						break;
-					}
-				}
-			}
-		});
+		emptyState.style.display = (visibleCount === 0 && searching) ? 'block' : 'none';
+	}
 
-		// Folder row visibility
-		if (folderRows.length > 0) {
-			folderRows.forEach(function(fRow) {
-				var fPath = fRow.getAttribute('data-folder-path');
-				var parent = fRow.getAttribute('data-parent-folder') || '';
-
-				if (activeFilter !== 'all' && !filterFolders.has(fPath)) {
-					fRow.style.display = 'none';
-					return;
-				}
-
-				var isHiddenByParent = false;
-				var parts = parent.split('/');
-				var cur = '';
-				for (var i = 0; i < parts.length; i++) {
-					if (parts[i]) {
-						cur = cur ? (cur + '/' + parts[i]) : parts[i];
-						if (collapsed.has(cur)) {
-							isHiddenByParent = true;
-							break;
-						}
-					}
-				}
-
-				if (isHiddenByParent) {
-					fRow.style.display = 'none';
-				} else {
-					fRow.style.display = '';
-					var isExpanded = fRow.getAttribute('data-expanded') !== 'false';
-					var caret = fRow.querySelector('.aui-folder-caret');
-					if (caret) caret.textContent = isExpanded ? '▾' : '▸';
-				}
-			});
-		}
-
-		if (visibleCount === 0 && (term || activeFilter !== 'all')) {
-			emptyState.style.display = 'block';
+	function toggleFolder(fRow) {
+		var path = fRow.getAttribute('data-folder-path');
+		if (isCollapsed(path)) {
+			expanded.add(path);
 		} else {
-			emptyState.style.display = 'none';
+			expanded.delete(path);
 		}
+		saveExpanded();
+		applyFilters();
 	}
 
 	folderRows.forEach(function(fRow) {
 		fRow.addEventListener('click', function(e) {
-			var isExp = fRow.getAttribute('data-expanded') !== 'false';
-			fRow.setAttribute('data-expanded', isExp ? 'false' : 'true');
-			var caret = fRow.querySelector('.aui-folder-caret');
-			if (caret) caret.textContent = isExp ? '▸' : '▾';
-			applyFilters();
+			if (e.target.closest('.aui-copy-path-btn')) return;
+			toggleFolder(fRow);
+		});
+		fRow.addEventListener('keydown', function(e) {
+			if (e.target.closest('.aui-copy-path-btn')) return;
+			var path = fRow.getAttribute('data-folder-path');
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				toggleFolder(fRow);
+			} else if (e.key === 'ArrowRight' && isCollapsed(path)) {
+				e.preventDefault();
+				toggleFolder(fRow);
+			} else if (e.key === 'ArrowLeft' && !isCollapsed(path)) {
+				e.preventDefault();
+				toggleFolder(fRow);
+			}
 		});
 	});
 
@@ -384,6 +378,45 @@ func GenerateIndexHTML(cfg pbconfig.Config, idx *index.Store) string {
 				}
 			}
 		}
+	});
+
+	// Copy a document or folder path, as accepted by 'pagebox rm' and 'pagebox mv'
+	function copyText(text) {
+		if (navigator.clipboard && window.isSecureContext) {
+			return navigator.clipboard.writeText(text);
+		}
+		return new Promise(function(resolve, reject) {
+			var ta = document.createElement('textarea');
+			ta.value = text;
+			ta.style.position = 'fixed';
+			ta.style.opacity = '0';
+			document.body.appendChild(ta);
+			ta.select();
+			var ok = false;
+			try { ok = document.execCommand('copy'); } catch (_) {}
+			document.body.removeChild(ta);
+			ok ? resolve() : reject(new Error('copy failed'));
+		});
+	}
+
+	tbody.addEventListener('click', function(e) {
+		var btn = e.target.closest('.aui-copy-path-btn');
+		if (!btn) return;
+		e.preventDefault();
+		e.stopPropagation();
+		var label = btn.querySelector('.aui-copy-path-label');
+		var original = label ? label.textContent : '';
+		copyText(btn.getAttribute('data-path')).then(function() {
+			btn.classList.add('copied');
+			if (label) label.textContent = 'Copied!';
+		}).catch(function() {
+			if (label) label.textContent = 'Failed';
+		}).then(function() {
+			setTimeout(function() {
+				btn.classList.remove('copied');
+				if (label) label.textContent = original;
+			}, 1500);
+		});
 	});
 
 	// Lazy load placeholder documents when clicked from index

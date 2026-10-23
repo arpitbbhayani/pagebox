@@ -185,7 +185,7 @@ Validates:
 | `pagebox status` | Show dirty, diverged, and stale document summary |
 | `pagebox pull` | Pull latest updates from S3 (use `--force` to overwrite local changes) |
 | `pagebox push` | Immediately push pending local modifications to S3 |
-| `pagebox delete <doc-id>` | Delete document locally and remove corresponding key from S3 |
+| `pagebox delete <doc-id>...` (alias `rm`) | Delete document locally and remove corresponding key from S3 |
 | `pagebox daemon install` | Install and start background OS service |
 | `pagebox daemon status` | Inspect background daemon status |
 | `pagebox daemon logs` | Stream live daemon service logs |
